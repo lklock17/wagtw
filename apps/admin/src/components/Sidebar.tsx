@@ -14,6 +14,7 @@ import { clsx } from 'clsx';
 const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
   { icon: Smartphone, label: 'Devices', path: '/devices' },
+  { icon: Send, label: 'Broadcast', path: '/broadcast' },
   { icon: Inbox, label: 'Inbox', path: '/inbox' },
   { icon: MessageSquare, label: 'Templates', path: '/templates' },
   { icon: Send, label: 'Logs', path: '/logs' },

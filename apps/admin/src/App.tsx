@@ -5,6 +5,7 @@ import Inbox from './pages/Inbox';
 import Templates from './pages/Templates';
 import Clients from './pages/Clients';
 import Settings from './pages/Settings';
+import Broadcast from './pages/Broadcast';
 import Sidebar from './components/Sidebar';
 
 
@@ -32,6 +33,7 @@ function App() {
           <Route path="/templates" element={<Templates />} />
           <Route path="/clients" element={<Clients />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/broadcast" element={<Broadcast />} />
         </Routes>
       </main>
     </div>
