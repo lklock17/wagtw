@@ -1,0 +1,135 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DeviceStatus {
+  DISCONNECTED
+  CONNECTING
+  QR_READY
+  CONNECTED
+  AUTHENTICATING
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+  LINK
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Device {
+  id            String       @id @default(cuid())
+  name          String
+  phoneNumber   String?      @unique
+  status        DeviceStatus @default(DISCONNECTED)
+  qrCode        String?      @db.Text
+  sessionData   String?      @db.Text
+  autoReply     Boolean      @default(true)
+  webhookUrl    String?
+  lastConnected DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  messages      InboxMessage[]
+  logs          MessageLog[]
+  threads       InboxThread[]
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  apiKey    String   @unique @default(uuid())
+  rateLimit Int      @default(60) // messages per minute
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  logs      MessageLog[]
+}
+
+model InboxThread {
+  id           String   @id @default(cuid())
+  deviceId     String
+  device       Device   @relation(fields: [deviceId], references: [id])
+  remoteNumber String
+  lastMessage  String?  @db.Text
+  unreadCount  Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  messages     InboxMessage[]
+
+  @@unique([deviceId, remoteNumber])
+}
+
+model InboxMessage {
+  id          String      @id @default(cuid())
+  threadId    String
+  thread      InboxThread @relation(fields: [threadId], references: [id])
+  deviceId    String
+  device      Device      @relation(fields: [deviceId], references: [id])
+  fromMe      Boolean
+  body        String?     @db.Text
+  type        MessageType @default(TEXT)
+  metadata    Json?       // Store WA metadata like message ID, timestamp, media url
+  timestamp   DateTime    @default(now())
+
+  @@index([deviceId])
+}
+
+model MessageLog {
+  id        String        @id @default(cuid())
+  deviceId  String
+  device    Device        @relation(fields: [deviceId], references: [id])
+  clientId  String?
+  client    Client?       @relation(fields: [clientId], references: [id])
+  to        String
+  body      String        @db.Text
+  type      MessageType   @default(TEXT)
+  status    MessageStatus @default(PENDING)
+  error     String?
+  metadata  Json?
+  createdAt DateTime      @default(now())
+}
+
+model Template {
+  id        String      @id @default(cuid())
+  name      String      @unique
+  body      String      @db.Text
+  type      MessageType @default(TEXT)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+}
+
+model AutoReplyRule {
+  id         String   @id @default(cuid())
+  keyword    String?  // If null, it's AI-based fallback
+  response   String?  @db.Text
+  isAi       Boolean  @default(false)
+  cooldown   Int      @default(30) // seconds
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}

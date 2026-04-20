@@ -1,0 +1,20 @@
+{
+  "name": "wagtw-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:worker": "npm run dev --workspace=apps/worker",
+    "dev:admin": "npm run dev --workspace=apps/admin",
+    "db:generate": "npm run generate --workspace=packages/database",
+    "db:push": "npm run push --workspace=packages/database"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "turbo": "latest"
+  }
+}

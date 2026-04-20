@@ -1,0 +1,15 @@
+{
+  "name": "@wagtw/database",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "dependencies": {
+    "@prisma/client": "^5.0.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.0.0"
+  },
+  "scripts": {
+    "generate": "prisma generate",
+    "push": "prisma db push"
+  }
+}
