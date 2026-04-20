@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Smartphone, RefreshCw, LogOut, Power, MoreHorizontal, ShieldCheck } from 'lucide-react';
+import { Plus, Smartphone, RefreshCw, LogOut, Power, MoreHorizontal, ShieldCheck, Link, Globe, Send as SendIcon, Check, X, Loader2 } from 'lucide-react';
 import { deviceService } from '../services/api';
 import { clsx } from 'clsx';
 
@@ -7,9 +7,39 @@ export default function Devices() {
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const [showWebhook, setShowWebhook] = useState<string | null>(null);
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; latency?: number; error?: string } | null>(null);
+
   useEffect(() => {
     fetchDevices();
   }, []);
+
+  const handleUpdateWebhook = async (id: string) => {
+    try {
+      await deviceService.updateWebhook(id, webhookUrl);
+      alert('Webhook updated successfully');
+      setShowWebhook(null);
+      fetchDevices();
+    } catch (err) {
+      alert('Failed to update webhook');
+    }
+  };
+
+  const handleTestWebhook = async () => {
+    if (!webhookUrl) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await deviceService.testWebhook(webhookUrl);
+      setTestResult(res.data);
+    } catch (err: any) {
+      setTestResult({ success: false, error: err.response?.data?.error || err.message });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const fetchDevices = async () => {
     try {
@@ -104,7 +134,67 @@ export default function Devices() {
                 </div>
                 
                 <h3 className="font-bold text-slate-900 text-xl mb-1">{device.name}</h3>
-                <p className="text-slate-400 text-sm font-medium">{device.phoneNumber || 'Awaiting connection...'}</p>
+                <p className="text-slate-400 text-sm font-medium mb-4">{device.phoneNumber || 'Awaiting connection...'}</p>
+
+                {/* Webhook Section */}
+                <div className="mt-6 space-y-3">
+                   <button 
+                    onClick={() => {
+                      setShowWebhook(showWebhook === device.id ? null : device.id);
+                      setWebhookUrl(device.webhookUrl || '');
+                      setTestResult(null);
+                    }}
+                    className={clsx(
+                      "flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg transition-all",
+                      device.webhookUrl ? "bg-emerald-50 text-emerald-600" : "bg-slate-50 text-slate-400"
+                    )}
+                   >
+                      <Globe className="w-3.5 h-3.5" />
+                      {device.webhookUrl ? 'WEBHOOK ACTIVE' : 'CONFIGURE WEBHOOK'}
+                   </button>
+
+                   {showWebhook === device.id && (
+                     <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="relative">
+                           <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                           <input 
+                            type="text" 
+                            value={webhookUrl}
+                            onChange={(e) => setWebhookUrl(e.target.value)}
+                            placeholder="https://your-api.com/webhook"
+                            className="w-full pl-10 pr-4 py-2 bg-white border border-slate-100 rounded-xl text-xs focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+                           />
+                        </div>
+                        
+                        <div className="flex gap-2">
+                           <button 
+                            onClick={handleTestWebhook}
+                            disabled={testing || !webhookUrl}
+                            className="flex-1 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-[10px] font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                           >
+                              {testing ? <Loader2 className="w-3 h-3 animate-spin" /> : <SendIcon className="w-3 h-3" />}
+                              TEST URL
+                           </button>
+                           <button 
+                            onClick={() => handleUpdateWebhook(device.id)}
+                            className="flex-1 py-2 bg-slate-900 text-white rounded-xl text-[10px] font-bold hover:bg-slate-800 transition-all"
+                           >
+                              SAVE
+                           </button>
+                        </div>
+
+                        {testResult && (
+                          <div className={clsx(
+                            "p-2 rounded-xl text-[10px] font-medium flex items-center gap-2",
+                            testResult.success ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                          )}>
+                             {testResult.success ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                             {testResult.success ? `Success! Latency: ${testResult.latency}ms` : `Failed: ${testResult.error}`}
+                          </div>
+                        )}
+                     </div>
+                   )}
+                </div>
                 
                 {device.qrCode && device.status === 'QR_READY' && (
                   <div className="mt-8 p-4 bg-slate-50 border border-slate-100 rounded-3xl relative group/qr">

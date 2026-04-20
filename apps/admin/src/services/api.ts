@@ -19,6 +19,8 @@ export const deviceService = {
   createDevice: (name: string) => api.post('/devices', { name }),
   connectDevice: (id: string) => api.post(`/devices/${id}/connect`),
   deleteDevice: (id: string) => api.delete(`/devices/${id}`),
+  updateWebhook: (id: string, url: string) => api.patch(`/devices/${id}/webhook`, { webhookUrl: url }),
+  testWebhook: (url: string) => api.post('/devices/test-webhook', { url }),
 };
 
 export const inboxService = {
