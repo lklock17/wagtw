@@ -105,16 +105,33 @@ class WhatsAppManager {
       if (!message.fromMe) {
         const device = await prisma.device.findUnique({ where: { id: deviceId } });
         if (device?.autoReply) {
-          const response = await aiService.generateResponse(message.body);
-          if (response) {
-            await client.sendText(message.from, response);
+          // Fetch rules
+          const rules = await prisma.autoReplyRule.findMany({ where: { isActive: true } });
+          
+          let responseText = null;
+          
+          // 1. Try keyword match
+          const matchedRule = rules.find(r => r.keyword && message.body.toLowerCase().includes(r.keyword.toLowerCase()));
+          
+          if (matchedRule) {
+            responseText = matchedRule.isAi ? await aiService.generateResponse(message.body) : matchedRule.response;
+          } else {
+            // 2. Fallback to AI if enabled
+            const aiFallback = rules.find(r => r.isAi && !r.keyword);
+            if (aiFallback) {
+              responseText = await aiService.generateResponse(message.body);
+            }
+          }
+
+          if (responseText) {
+            await client.sendText(message.from, responseText);
             // Log the reply
             await prisma.inboxMessage.create({
               data: {
                 threadId: thread.id,
                 deviceId,
                 fromMe: true,
-                body: response,
+                body: responseText,
                 type: 'TEXT'
               }
             });

@@ -4,6 +4,7 @@ import Devices from './pages/Devices';
 import Inbox from './pages/Inbox';
 import Templates from './pages/Templates';
 import Clients from './pages/Clients';
+import Settings from './pages/Settings';
 import Sidebar from './components/Sidebar';
 
 
@@ -18,6 +19,7 @@ function App() {
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/templates" element={<Templates />} />
           <Route path="/clients" element={<Clients />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
     </div>

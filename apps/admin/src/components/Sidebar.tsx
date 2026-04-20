@@ -18,6 +18,7 @@ const menuItems = [
   { icon: MessageSquare, label: 'Templates', path: '/templates' },
   { icon: Send, label: 'Logs', path: '/logs' },
   { icon: Key, label: 'API Clients', path: '/clients' },
+  { icon: Settings, label: 'Settings', path: '/settings' },
 ];
 
 export default function Sidebar() {
