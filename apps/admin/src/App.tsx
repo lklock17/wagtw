@@ -1,7 +1,9 @@
 import { Routes, Route } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Devices from './pages/Devices';
-// import Inbox from './pages/Inbox';
+import Inbox from './pages/Inbox';
+import Templates from './pages/Templates';
+import Clients from './pages/Clients';
 import Sidebar from './components/Sidebar';
 
 
@@ -13,7 +15,9 @@ function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/devices" element={<Devices />} />
-          {/* <Route path="/inbox" element={<Inbox />} /> */}
+          <Route path="/inbox" element={<Inbox />} />
+          <Route path="/templates" element={<Templates />} />
+          <Route path="/clients" element={<Clients />} />
         </Routes>
       </main>
     </div>
