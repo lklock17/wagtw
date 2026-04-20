@@ -20,7 +20,7 @@ jobs:
         run: npm install
 
       - name: Build Admin
-        run: npm run build --workspace=apps/admin
+        run: cd apps/admin && npx vite build
         env:
           VITE_API_URL: https://wagtw-api-lkl-a44634725bb8.herokuapp.com/api
 
