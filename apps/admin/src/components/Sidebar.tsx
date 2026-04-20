@@ -69,7 +69,13 @@ export default function Sidebar() {
             <p className="font-bold text-slate-900 text-sm truncate">Admin Premium</p>
             <p className="text-slate-400 text-[10px] font-medium uppercase tracking-wider">Super Admin</p>
           </div>
-          <Settings className="w-4 h-4 text-slate-300 group-hover:rotate-90 transition-transform duration-500" />
+          <button 
+            onClick={() => { localStorage.clear(); window.location.reload(); }}
+            className="p-2 hover:bg-rose-50 text-slate-300 hover:text-rose-500 rounded-lg transition-all"
+            title="Logout"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </div>

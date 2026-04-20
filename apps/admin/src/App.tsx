@@ -8,7 +8,19 @@ import Settings from './pages/Settings';
 import Sidebar from './components/Sidebar';
 
 
+import Login from './pages/Login';
+
 function App() {
+  const token = localStorage.getItem('token');
+
+  if (!token) {
+    return (
+      <Routes>
+        <Route path="*" element={<Login />} />
+      </Routes>
+    );
+  }
+
   return (
     <div className="flex h-screen bg-gray-100">
       <Sidebar />
