@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Smartphone, RefreshCw, LogOut, Power } from 'lucide-react';
+import { Plus, Smartphone, RefreshCw, LogOut, Power, MoreHorizontal, ShieldCheck } from 'lucide-react';
 import { deviceService } from '../services/api';
 import { clsx } from 'clsx';
 
@@ -44,75 +44,92 @@ export default function Devices() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Devices</h1>
-          <p className="text-gray-500 mt-1">Manage your WhatsApp sessions and monitoring.</p>
+          <h1 className="text-4xl font-bold text-slate-900 tracking-tight">Devices</h1>
+          <p className="text-slate-500 mt-2 text-lg">Manage and monitor your connected WhatsApp numbers.</p>
         </div>
         <button 
           onClick={handleAddDevice}
-          className="bg-primary hover:bg-secondary text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+          className="bg-primary hover:bg-secondary text-white px-6 py-3 rounded-2xl flex items-center gap-3 transition-all shadow-lg shadow-primary/30 font-bold"
         >
           <Plus className="w-5 h-5" />
-          Add Device
+          Add New Device
         </button>
       </div>
 
       {loading ? (
-        <div className="text-center py-12 text-gray-500">Loading devices...</div>
+        <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-4">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+          <p className="font-medium">Fetching your devices...</p>
+        </div>
       ) : devices.length === 0 ? (
-        <div className="bg-white rounded-xl shadow-sm border border-dashed border-gray-300 p-12 text-center">
-          <div className="bg-gray-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Smartphone className="w-8 h-8 text-gray-400" />
+        <div className="bg-white rounded-[2.5rem] shadow-sm border border-dashed border-slate-200 p-20 text-center flex flex-col items-center">
+          <div className="bg-slate-50 w-24 h-24 rounded-[2rem] flex items-center justify-center mb-6 shadow-inner">
+            <Smartphone className="w-10 h-10 text-slate-300" />
           </div>
-          <h3 className="text-lg font-medium text-gray-900">No devices connected</h3>
-          <p className="text-gray-500 mt-1 mb-6">Start by adding your first WhatsApp number.</p>
+          <h3 className="text-2xl font-bold text-slate-900">No devices found</h3>
+          <p className="text-slate-400 mt-2 mb-8 max-w-sm">Connect your first WhatsApp number to start using the gateway services.</p>
           <button 
             onClick={handleAddDevice}
-            className="text-primary font-medium hover:underline"
+            className="text-primary font-bold hover:bg-primary/5 px-6 py-3 rounded-xl transition-all"
           >
-            Connect New Device
+            + Connect New Device
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {devices.map((device: any) => (
-            <div key={device.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-              <div className="p-6">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="bg-primary/10 p-2 rounded-lg">
-                    <Smartphone className="w-6 h-6 text-primary" />
+            <div key={device.id} className="group bg-white rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden hover:shadow-2xl hover:shadow-slate-200/50 transition-all duration-500">
+              <div className="p-8">
+                <div className="flex justify-between items-start mb-6">
+                  <div className="bg-slate-50 p-4 rounded-2xl group-hover:bg-primary/10 transition-colors duration-500">
+                    <Smartphone className="w-8 h-8 text-slate-400 group-hover:text-primary transition-colors" />
                   </div>
-                  <span className={clsx(
-                    "px-2 py-1 text-xs font-bold rounded-full",
-                    device.status === 'CONNECTED' ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
-                  )}>
-                    {device.status}
-                  </span>
+                  <div className="flex flex-col items-end gap-2">
+                    <span className={clsx(
+                      "px-3 py-1 text-[10px] font-bold rounded-full uppercase tracking-widest",
+                      device.status === 'CONNECTED' ? "bg-emerald-100 text-emerald-600" : "bg-amber-100 text-amber-600"
+                    )}>
+                      {device.status}
+                    </span>
+                    {device.status === 'CONNECTED' && (
+                      <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-500">
+                        <ShieldCheck className="w-3 h-3" />
+                        SECURE
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <h3 className="font-bold text-gray-900 text-lg">{device.name}</h3>
-                <p className="text-gray-500 text-sm mb-4">{device.phoneNumber || 'Not connected'}</p>
+                
+                <h3 className="font-bold text-slate-900 text-xl mb-1">{device.name}</h3>
+                <p className="text-slate-400 text-sm font-medium">{device.phoneNumber || 'Awaiting connection...'}</p>
                 
                 {device.qrCode && device.status === 'QR_READY' && (
-                  <div className="mt-4 p-2 bg-white border rounded-lg">
-                    <img src={device.qrCode} alt="QR Code" className="w-full h-auto" />
-                    <p className="text-xs text-center text-gray-500 mt-2">Scan with WhatsApp</p>
+                  <div className="mt-8 p-4 bg-slate-50 border border-slate-100 rounded-3xl relative group/qr">
+                    <img src={device.qrCode} alt="QR Code" className="w-full h-auto rounded-xl shadow-inner mix-blend-multiply" />
+                    <div className="absolute inset-0 bg-white/40 backdrop-blur-[2px] opacity-0 group-hover/qr:opacity-100 transition-opacity flex items-center justify-center rounded-3xl">
+                       <p className="bg-slate-900 text-white text-[10px] font-bold px-3 py-2 rounded-full">Scan with WhatsApp</p>
+                    </div>
                   </div>
                 )}
               </div>
-              <div className="bg-gray-50 px-6 py-4 flex justify-between border-t">
-                 <button 
-                  onClick={() => handleConnect(device.id)}
-                  className="p-2 hover:bg-gray-200 rounded-lg text-gray-600 transition-colors" 
-                  title="Reconnect"
-                 >
-                    <RefreshCw className="w-5 h-5" />
-                 </button>
-                 <button className="p-2 hover:bg-gray-200 rounded-lg text-gray-600 transition-colors" title="Disable Auto Reply">
-                    <Power className="w-5 h-5" />
-                 </button>
-                 <button className="p-2 hover:bg-red-100 rounded-lg text-red-600 transition-colors" title="Logout">
+              
+              <div className="bg-slate-50/50 px-8 py-5 flex justify-between items-center border-t border-slate-50">
+                 <div className="flex gap-2">
+                   <button 
+                    onClick={() => handleConnect(device.id)}
+                    className="p-3 bg-white hover:bg-slate-900 hover:text-white rounded-xl text-slate-400 transition-all shadow-sm" 
+                    title="Reconnect"
+                   >
+                      <RefreshCw className="w-5 h-5" />
+                   </button>
+                   <button className="p-3 bg-white hover:bg-slate-900 hover:text-white rounded-xl text-slate-400 transition-all shadow-sm" title="Disable Auto Reply">
+                      <Power className="w-5 h-5" />
+                   </button>
+                 </div>
+                 <button className="p-3 bg-white hover:bg-rose-500 hover:text-white rounded-xl text-slate-400 transition-all shadow-sm" title="Logout">
                     <LogOut className="w-5 h-5" />
                  </button>
               </div>
