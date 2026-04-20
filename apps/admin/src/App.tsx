@@ -6,6 +6,7 @@ import Templates from './pages/Templates';
 import Clients from './pages/Clients';
 import Settings from './pages/Settings';
 import Broadcast from './pages/Broadcast';
+import Media from './pages/Media';
 import Sidebar from './components/Sidebar';
 
 
@@ -34,6 +35,7 @@ function App() {
           <Route path="/clients" element={<Clients />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/broadcast" element={<Broadcast />} />
+          <Route path="/media" element={<Media />} />
         </Routes>
       </main>
     </div>

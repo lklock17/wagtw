@@ -7,7 +7,9 @@ import {
   Key, 
   Settings, 
   MessageSquare,
-  ChevronRight
+  ChevronRight,
+  Image as ImageIcon,
+  LogOut
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -15,9 +17,9 @@ const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
   { icon: Smartphone, label: 'Devices', path: '/devices' },
   { icon: Send, label: 'Broadcast', path: '/broadcast' },
+  { icon: ImageIcon, label: 'Media Library', path: '/media' },
   { icon: Inbox, label: 'Inbox', path: '/inbox' },
   { icon: MessageSquare, label: 'Templates', path: '/templates' },
-  { icon: Send, label: 'Logs', path: '/logs' },
   { icon: Key, label: 'API Clients', path: '/clients' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];

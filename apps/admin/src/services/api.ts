@@ -53,6 +53,14 @@ export const bulkService = {
   getJobStatus: (id: string) => api.get(`/bulk/${id}`),
 };
 
+export const mediaService = {
+  getMedia: () => api.get('/media'),
+  uploadMedia: (formData: FormData) => api.post('/media/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  deleteMedia: (id: string) => api.delete(`/media/${id}`),
+};
+
 export const messageService = {
   sendMessage: (data: any) => api.post('/messages/send', data),
 };

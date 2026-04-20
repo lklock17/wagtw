@@ -7,6 +7,7 @@ import clientRoutes from './client.routes';
 import autoReplyRoutes from './autoreply.routes';
 import authRoutes from './auth.routes';
 import bulkRoutes from './bulk.routes';
+import mediaRoutes from './media.routes';
 import { authMiddleware } from '../middlewares/auth.middleware';
 
 const router = Router();
@@ -21,5 +22,6 @@ router.use('/templates', authMiddleware, templateRoutes);
 router.use('/clients', authMiddleware, clientRoutes);
 router.use('/autoreply', authMiddleware, autoReplyRoutes);
 router.use('/bulk', authMiddleware, bulkRoutes);
+router.use('/media', authMiddleware, mediaRoutes);
 
 export default router;
