@@ -1,8 +1,9 @@
 import { Routes, Route } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Devices from './pages/Devices';
-import Inbox from './pages/Inbox';
+// import Inbox from './pages/Inbox';
 import Sidebar from './components/Sidebar';
+
 
 function App() {
   return (
@@ -12,11 +13,12 @@ function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/devices" element={<Devices />} />
-          <Route path="/inbox" element={<Inbox />} />
+          {/* <Route path="/inbox" element={<Inbox />} /> */}
         </Routes>
       </main>
     </div>
   )
 }
+
 
 export default App
