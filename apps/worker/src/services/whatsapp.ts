@@ -71,6 +71,8 @@ class WhatsAppManager {
       if (message.isGroupMsg) return; // Optional: handle group
 
       // 1. Save to Inbox
+      if (!message.from || !message.body) return;
+
       const thread = await prisma.inboxThread.upsert({
         where: {
           deviceId_remoteNumber: {
@@ -102,16 +104,17 @@ class WhatsAppManager {
       });
 
       // 2. AI Auto Reply
-      if (!message.fromMe) {
+      if (!message.fromMe && message.body) {
         const device = await prisma.device.findUnique({ where: { id: deviceId } });
         if (device?.autoReply) {
           // Fetch rules
           const rules = await prisma.autoReplyRule.findMany({ where: { isActive: true } });
           
           let responseText = null;
+          const bodyLower = message.body.toLowerCase();
           
           // 1. Try keyword match
-          const matchedRule = rules.find(r => r.keyword && message.body.toLowerCase().includes(r.keyword.toLowerCase()));
+          const matchedRule = rules.find(r => r.keyword && bodyLower.includes(r.keyword.toLowerCase()));
           
           if (matchedRule) {
             responseText = matchedRule.isAi ? await aiService.generateResponse(message.body) : matchedRule.response;
@@ -123,7 +126,7 @@ class WhatsAppManager {
             }
           }
 
-          if (responseText) {
+          if (responseText && message.from) {
             await client.sendText(message.from, responseText);
             // Log the reply
             await prisma.inboxMessage.create({
