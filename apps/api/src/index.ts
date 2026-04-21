@@ -4,6 +4,9 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import cron from 'node-cron';
+import axios from 'axios';
+import { prisma } from '@wagtw/database';
 import routes from './routes';
 
 dotenv.config();
@@ -27,6 +30,41 @@ app.get('/', (req, res) => {
 });
 
 app.use('/api', routes);
+
+// Scheduled Messages Worker (Every 1 minute)
+cron.schedule('* * * * *', async () => {
+  const now = new Date();
+  const dueMessages = await prisma.scheduledMessage.findMany({
+    where: {
+      status: 'PENDING',
+      scheduledAt: { lte: now }
+    }
+  });
+
+  const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4001';
+
+  for (const msg of dueMessages) {
+    try {
+      await axios.post(`${WORKER_URL}/messages/send`, {
+        deviceId: msg.deviceId,
+        to: msg.to,
+        text: msg.body
+      });
+
+      await prisma.scheduledMessage.update({
+        where: { id: msg.id },
+        data: { status: 'SENT' }
+      });
+      console.log(`✅ Scheduled message sent to ${msg.to}`);
+    } catch (error: any) {
+      await prisma.scheduledMessage.update({
+        where: { id: msg.id },
+        data: { status: 'FAILED', error: error.message }
+      });
+      console.error(`❌ Failed to send scheduled message: ${error.message}`);
+    }
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`🚀 API Server ready at http://localhost:${PORT}`);

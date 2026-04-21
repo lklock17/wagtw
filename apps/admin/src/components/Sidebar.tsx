@@ -9,7 +9,8 @@ import {
   MessageSquare,
   ChevronRight,
   Image as ImageIcon,
-  LogOut
+  LogOut,
+  Calendar
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -17,6 +18,7 @@ const menuItems = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
   { icon: Smartphone, label: 'Devices', path: '/devices' },
   { icon: Send, label: 'Broadcast', path: '/broadcast' },
+  { icon: Calendar, label: 'Scheduling', path: '/scheduling' },
   { icon: ImageIcon, label: 'Media Library', path: '/media' },
   { icon: Inbox, label: 'Inbox', path: '/inbox' },
   { icon: MessageSquare, label: 'Templates', path: '/templates' },

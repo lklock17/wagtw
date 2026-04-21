@@ -61,6 +61,12 @@ export const mediaService = {
   deleteMedia: (id: string) => api.delete(`/media/${id}`),
 };
 
+export const scheduleService = {
+  getSchedules: () => api.get('/schedules'),
+  createSchedule: (data: any) => api.post('/schedules', data),
+  deleteSchedule: (id: string) => api.delete(`/schedules/${id}`),
+};
+
 export const messageService = {
   sendMessage: (data: any) => api.post('/messages/send', data),
 };

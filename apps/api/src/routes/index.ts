@@ -8,6 +8,7 @@ import autoReplyRoutes from './autoreply.routes';
 import authRoutes from './auth.routes';
 import bulkRoutes from './bulk.routes';
 import mediaRoutes from './media.routes';
+import scheduleRoutes from './schedule.routes';
 import { authMiddleware } from '../middlewares/auth.middleware';
 
 const router = Router();
@@ -23,5 +24,6 @@ router.use('/clients', authMiddleware, clientRoutes);
 router.use('/autoreply', authMiddleware, autoReplyRoutes);
 router.use('/bulk', authMiddleware, bulkRoutes);
 router.use('/media', authMiddleware, mediaRoutes);
+router.use('/schedules', authMiddleware, scheduleRoutes);
 
 export default router;
