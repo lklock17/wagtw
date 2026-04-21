@@ -15,12 +15,18 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(cors({
+
+const corsOptions = {
   origin: ['https://lklock17.github.io', 'http://localhost:5173'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
-}));
+  credentials: true,
+  optionsSuccessStatus: 200 // Some legacy browsers (IE11, various SmartTVs) choke on 204
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // Enable pre-flight for all routes
+
 app.use(express.json());
 
 const uploadsDir = path.join(__dirname, '../uploads');
