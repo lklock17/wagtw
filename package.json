@@ -11,7 +11,9 @@
     "dev:worker": "npm run dev --workspace=apps/worker",
     "dev:admin": "npm run dev --workspace=apps/admin",
     "db:generate": "npm run generate --workspace=packages/database",
-    "db:push": "npm run push --workspace=packages/database"
+    "db:push": "npm run push --workspace=packages/database",
+    "build": "npm run db:generate && npm run build --workspaces --if-present",
+    "heroku-postbuild": "npm run build"
   },
   "devDependencies": {
     "typescript": "^5.0.0",
