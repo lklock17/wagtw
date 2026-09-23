@@ -167,3 +167,37 @@ export const sendMessage = async (req: Request, res: Response) => {
     attempts
   });
 };
+
+export const checkNumberGlobal = async (req: Request, res: Response) => {
+  const { phone, deviceId } = req.body;
+
+  if (!phone) {
+    return res.status(400).json({ success: false, error: 'Nomor telepon ("phone") wajib diisi' });
+  }
+
+  // Find an active connected device
+  const connectedDevice = deviceId
+    ? await prisma.device.findFirst({ where: { id: deviceId, status: 'CONNECTED' } })
+    : await prisma.device.findFirst({ where: { status: 'CONNECTED' }, orderBy: { updatedAt: 'desc' } });
+
+  if (!connectedDevice) {
+    return res.status(503).json({
+      success: false,
+      error: 'Tidak ada perangkat WhatsApp yang aktif (CONNECTED) untuk memeriksa nomor ini.'
+    });
+  }
+
+  try {
+    const response = await axios.post(
+      `${WORKER_URL}/devices/${connectedDevice.id}/check-number`,
+      { phone },
+      { timeout: 10000 }
+    );
+    res.json(response.data);
+  } catch (error: any) {
+    res.status(error.response?.status || 500).json({
+      success: false,
+      error: error.response?.data?.error || error.message
+    });
+  }
+};

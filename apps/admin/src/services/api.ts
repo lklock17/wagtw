@@ -21,6 +21,8 @@ export const deviceService = {
   deleteDevice: (id: string) => api.delete(`/devices/${id}`),
   updateWebhook: (id: string, url: string) => api.patch(`/devices/${id}/webhook`, { webhookUrl: url }),
   testWebhook: (url: string) => api.post('/devices/test-webhook', { url }),
+  getPairingCode: (id: string, phone: string) => api.post(`/devices/${id}/pairing-code`, { phone }),
+  checkNumber: (id: string, phone: string) => api.post(`/devices/${id}/check-number`, { phone }),
 };
 
 export const inboxService = {
@@ -70,6 +72,7 @@ export const scheduleService = {
 
 export const messageService = {
   sendMessage: (data: any) => api.post('/messages/send', data),
+  checkNumber: (phone: string, deviceId?: string) => api.post('/messages/check-number', { phone, deviceId }),
 };
 
 export const statsService = {

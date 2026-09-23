@@ -14,7 +14,13 @@ import {
   MessageSquare,
   AlertCircle,
   Clock,
-  Sparkles
+  Sparkles,
+  Search,
+  KeyRound,
+  Copy,
+  CheckCircle2,
+  XCircle,
+  Hash
 } from 'lucide-react';
 import { deviceService, messageService } from '../services/api';
 import { clsx } from 'clsx';
@@ -36,14 +42,28 @@ export default function Devices() {
   const [sendingTest, setSendingTest] = useState(false);
   const [testSentStatus, setTestSentStatus] = useState<string | null>(null);
 
-  // QR Modal
+  // QR & Pairing Modal
   const [qrModalDevice, setQrModalDevice] = useState<any | null>(null);
+  const [connectTab, setConnectTab] = useState<'qr' | 'pairing'>('qr');
+  const [pairingPhone, setPairingPhone] = useState('');
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [requestingPairingCode, setRequestingPairingCode] = useState(false);
+  const [pairingError, setPairingError] = useState<string | null>(null);
+  const [pairingCopied, setPairingCopied] = useState(false);
 
   // Webhook Modal
   const [webhookDevice, setWebhookDevice] = useState<any | null>(null);
   const [webhookUrl, setWebhookUrl] = useState('');
   const [testingWebhook, setTestingWebhook] = useState(false);
   const [webhookTestResult, setWebhookTestResult] = useState<{ success: boolean; latency?: number; error?: string } | null>(null);
+
+  // Check Number Modal
+  const [showCheckNumberModal, setShowCheckNumberModal] = useState(false);
+  const [checkDeviceId, setCheckDeviceId] = useState<string>('');
+  const [checkPhone, setCheckPhone] = useState('');
+  const [checkingNumber, setCheckingNumber] = useState(false);
+  const [checkResult, setCheckResult] = useState<any | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
 
   const fetchDevices = async () => {
     try {
@@ -91,6 +111,10 @@ export default function Devices() {
   const handleConnect = async (device: any) => {
     setConnectingId(device.id);
     setQrModalDevice(device);
+    setConnectTab('qr');
+    setPairingPhone('');
+    setPairingCode(null);
+    setPairingError(null);
     try {
       await deviceService.connectDevice(device.id);
       fetchDevices();
@@ -173,6 +197,50 @@ export default function Devices() {
     }
   };
 
+  const handleRequestPairingCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!qrModalDevice || !pairingPhone.trim()) return;
+    setRequestingPairingCode(true);
+    setPairingError(null);
+    setPairingCode(null);
+    try {
+      const formatted = normalizePhone(pairingPhone);
+      const res = await deviceService.getPairingCode(qrModalDevice.id, formatted);
+      if (res.data?.pairingCode) {
+        setPairingCode(res.data.pairingCode);
+      } else {
+        setPairingError('WhatsApp belum memberikan kode pairing. Pastikan Chromium sudah siap.');
+      }
+    } catch (err: any) {
+      setPairingError(err.response?.data?.error || err.message || 'Gagal memproses kode pairing');
+    } finally {
+      setRequestingPairingCode(false);
+    }
+  };
+
+  const handleCopyPairingCode = () => {
+    if (!pairingCode) return;
+    navigator.clipboard.writeText(pairingCode);
+    setPairingCopied(true);
+    setTimeout(() => setPairingCopied(false), 2000);
+  };
+
+  const handleCheckNumber = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!checkPhone.trim()) return;
+    setCheckingNumber(true);
+    setCheckResult(null);
+    setCheckError(null);
+    try {
+      const res = await messageService.checkNumber(checkPhone.trim(), checkDeviceId || undefined);
+      setCheckResult(res.data);
+    } catch (err: any) {
+      setCheckError(err.response?.data?.error || err.message || 'Gagal memeriksa nomor');
+    } finally {
+      setCheckingNumber(false);
+    }
+  };
+
   return (
     <div className="space-y-5 max-w-6xl mx-auto pb-12">
       {/* Header */}
@@ -181,13 +249,28 @@ export default function Devices() {
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">Manajemen WhatsApp Devices</h1>
           <p className="text-xs text-slate-500 mt-0.5">Kelola multi-nomor WhatsApp Anda dalam satu panel kendali terpusat.</p>
         </div>
-        <button 
-          onClick={() => setShowAddModal(true)}
-          className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg font-bold text-xs transition-all shadow-xs cursor-pointer"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>Tambah Device Baru</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => {
+              setShowCheckNumberModal(true);
+              setCheckResult(null);
+              setCheckError(null);
+              const connected = devices.find(d => d.status === 'CONNECTED');
+              if (connected) setCheckDeviceId(connected.id);
+            }}
+            className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-3.5 py-2 rounded-lg font-bold text-xs transition-all shadow-xs cursor-pointer"
+          >
+            <Search className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Cek Nomor WA</span>
+          </button>
+          <button 
+            onClick={() => setShowAddModal(true)}
+            className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg font-bold text-xs transition-all shadow-xs cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Tambah Device Baru</span>
+          </button>
+        </div>
       </div>
 
       {/* Device Grid */}
@@ -203,7 +286,7 @@ export default function Devices() {
           </div>
           <h3 className="text-sm font-bold text-slate-800">Belum ada WhatsApp Device Terdaftar</h3>
           <p className="text-slate-500 text-xs mt-1 mb-4 max-w-md">
-            Mulai dengan menambahkan nama perangkat pertama Anda, lalu scan QR Code dengan WhatsApp di ponsel.
+            Mulai dengan menambahkan nama perangkat pertama Anda, lalu scan QR Code atau gunakan Kode Pairing 8-Digit.
           </p>
           <button 
             onClick={() => setShowAddModal(true)}
@@ -270,7 +353,7 @@ export default function Devices() {
                         setWebhookTestResult(null);
                       }}
                       className={clsx(
-                        "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border",
+                        "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border cursor-pointer",
                         device.webhookUrl 
                           ? "bg-emerald-50 text-emerald-700 border-emerald-200/80 hover:bg-emerald-100" 
                           : "bg-slate-50 text-slate-500 border-slate-200/60 hover:bg-slate-100"
@@ -281,9 +364,9 @@ export default function Devices() {
                     </button>
 
                     {device.autoReply && (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200/60">
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>AI Gemini Active</span>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>AI 9routes Active</span>
                       </span>
                     )}
                   </div>
@@ -299,7 +382,7 @@ export default function Devices() {
                           setTestPhone('');
                           setTestSentStatus(null);
                         }}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition-colors"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
                       >
                         <SendIcon className="w-3.5 h-3.5" />
                         <span>Kirim Tes</span>
@@ -308,21 +391,21 @@ export default function Devices() {
                       <button 
                         onClick={() => handleConnect(device)}
                         disabled={isConnecting}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm disabled:opacity-50"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm disabled:opacity-50 cursor-pointer"
                       >
                         {isConnecting ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         ) : (
                           <QrCode className="w-3.5 h-3.5" />
                         )}
-                        <span>{isQR ? 'Buka QR' : isConnecting ? 'Menghubungkan...' : 'Scan QR'}</span>
+                        <span>{isQR ? 'Buka QR / Pairing' : isConnecting ? 'Menghubungkan...' : 'Hubungkan'}</span>
                       </button>
                     )}
 
                     {isConnected && (
                       <button 
                         onClick={() => handleConnect(device)}
-                        className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-slate-200"
+                        className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-slate-200 cursor-pointer"
                         title="Reconnect Session"
                       >
                         <RefreshCw className="w-4 h-4" />
@@ -332,7 +415,7 @@ export default function Devices() {
 
                   <button 
                     onClick={() => handleDeleteDevice(device)}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                     title="Hapus Perangkat"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -352,7 +435,7 @@ export default function Devices() {
               <h3 className="text-lg font-bold text-slate-900">Tambah Device Baru</h3>
               <button 
                 onClick={() => setShowAddModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -379,14 +462,14 @@ export default function Devices() {
                 <button 
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 transition-colors"
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 transition-colors cursor-pointer"
                 >
                   Batal
                 </button>
                 <button 
                   type="submit"
                   disabled={addingDevice}
-                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                 >
                   {addingDevice && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>Simpan Perangkat</span>
@@ -397,18 +480,18 @@ export default function Devices() {
         </div>
       )}
 
-      {/* MODAL 2: Scan QR Code */}
+      {/* MODAL 2: Tautkan WhatsApp (QR Code / Pairing Code) */}
       {qrModalDevice && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-8 shadow-2xl border border-slate-100 text-center animate-in fade-in zoom-in-95 duration-200">
-            <div className="flex justify-between items-center mb-6">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-7 shadow-2xl border border-slate-100 text-center animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-5">
               <div className="text-left">
                 <h3 className="text-xl font-extrabold text-slate-900">Tautkan WhatsApp</h3>
                 <p className="text-xs text-slate-500 font-medium">Perangkat: <span className="text-slate-800 font-bold">{qrModalDevice.name}</span></p>
               </div>
               <button 
                 onClick={() => setQrModalDevice(null)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -420,43 +503,163 @@ export default function Devices() {
                   <Check className="w-8 h-8 stroke-[3]" />
                 </div>
                 <h4 className="text-lg font-bold text-slate-900">Berhasil Terhubung!</h4>
-                <p className="text-xs text-slate-500">Nomor: +{qrModalDevice.phoneNumber}</p>
-              </div>
-            ) : qrModalDevice.qrCode ? (
-              <div className="space-y-6">
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 inline-block shadow-inner">
-                  <img 
-                    src={qrModalDevice.qrCode} 
-                    alt="WhatsApp QR Code" 
-                    className="w-64 h-64 mx-auto rounded-xl shadow-sm"
-                  />
-                </div>
-
-                <div className="text-left bg-slate-50 p-4 rounded-2xl border border-slate-100 text-xs text-slate-600 space-y-2">
-                  <p className="font-bold text-slate-800 flex items-center gap-1.5">
-                    <Smartphone className="w-4 h-4 text-emerald-600" />
-                    Petunjuk Scan dari HP Anda:
-                  </p>
-                  <ol className="list-decimal list-inside space-y-1 text-slate-500">
-                    <li>Buka aplikasi <strong>WhatsApp</strong> di HP Anda.</li>
-                    <li>Buka menu <strong>Titik Tiga</strong> (Android) atau <strong>Pengaturan</strong> (iPhone).</li>
-                    <li>Pilih <strong>Perangkat Tertaut (Linked Devices)</strong>.</li>
-                    <li>Ketuk <strong>Tautkan Perangkat</strong> dan arahkan kamera ke QR di atas.</li>
-                  </ol>
-                </div>
+                <p className="text-xs text-slate-500 font-mono">Nomor: +{qrModalDevice.phoneNumber}</p>
               </div>
             ) : (
-              <div className="py-16 flex flex-col items-center justify-center gap-3">
-                <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
-                <p className="text-sm font-bold text-slate-800">Sedang menyiapkan QR Code...</p>
-                <p className="text-xs text-slate-400">Browser Chromium sedang memuat WhatsApp Web di server.</p>
+              <div>
+                {/* Method Tabs */}
+                <div className="flex border-b border-slate-200 mb-5">
+                  <button
+                    type="button"
+                    onClick={() => setConnectTab('qr')}
+                    className={clsx(
+                      "flex-1 pb-3 text-xs font-bold transition-all flex items-center justify-center gap-2 border-b-2 cursor-pointer",
+                      connectTab === 'qr'
+                        ? "border-emerald-600 text-emerald-700"
+                        : "border-transparent text-slate-400 hover:text-slate-600"
+                    )}
+                  >
+                    <QrCode className="w-4 h-4" />
+                    <span>Scan QR Code</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConnectTab('pairing')}
+                    className={clsx(
+                      "flex-1 pb-3 text-xs font-bold transition-all flex items-center justify-center gap-2 border-b-2 cursor-pointer",
+                      connectTab === 'pairing'
+                        ? "border-emerald-600 text-emerald-700"
+                        : "border-transparent text-slate-400 hover:text-slate-600"
+                    )}
+                  >
+                    <KeyRound className="w-4 h-4" />
+                    <span>Kode Pairing (8 Digit)</span>
+                  </button>
+                </div>
+
+                {connectTab === 'qr' ? (
+                  qrModalDevice.qrCode ? (
+                    <div className="space-y-5">
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 inline-block shadow-inner">
+                        <img 
+                          src={qrModalDevice.qrCode} 
+                          alt="WhatsApp QR Code" 
+                          className="w-60 h-60 mx-auto rounded-xl shadow-sm"
+                        />
+                      </div>
+
+                      <div className="text-left bg-slate-50 p-4 rounded-2xl border border-slate-100 text-xs text-slate-600 space-y-2">
+                        <p className="font-bold text-slate-800 flex items-center gap-1.5">
+                          <Smartphone className="w-4 h-4 text-emerald-600" />
+                          Petunjuk Scan dari HP:
+                        </p>
+                        <ol className="list-decimal list-inside space-y-1 text-slate-500">
+                          <li>Buka aplikasi <strong>WhatsApp</strong> di HP Anda.</li>
+                          <li>Buka menu <strong>Titik Tiga</strong> (Android) atau <strong>Pengaturan</strong> (iPhone).</li>
+                          <li>Pilih <strong>Perangkat Tertaut (Linked Devices)</strong>.</li>
+                          <li>Ketuk <strong>Tautkan Perangkat</strong> dan arahkan kamera ke QR di atas.</li>
+                        </ol>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="py-16 flex flex-col items-center justify-center gap-3">
+                      <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
+                      <p className="text-sm font-bold text-slate-800">Sedang menyiapkan QR Code...</p>
+                      <p className="text-xs text-slate-400">Chromium sedang memuat WhatsApp Web di server.</p>
+                    </div>
+                  )
+                ) : (
+                  /* Pairing Code Tab */
+                  <div className="space-y-4 text-left">
+                    <form onSubmit={handleRequestPairingCode} className="space-y-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                          Nomor HP WhatsApp Anda
+                        </label>
+                        <div className="flex gap-2">
+                          <input 
+                            type="text" 
+                            value={pairingPhone}
+                            onChange={(e) => setPairingPhone(e.target.value)}
+                            placeholder="Contoh: 08123456789 atau 628123456789" 
+                            required
+                            className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-mono"
+                          />
+                          <button
+                            type="submit"
+                            disabled={requestingPairingCode || !pairingPhone.trim()}
+                            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                          >
+                            {requestingPairingCode ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <KeyRound className="w-4 h-4" />
+                            )}
+                            <span>Minta Kode</span>
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Bisa diawali 08..., 628..., atau +62...
+                        </p>
+                      </div>
+                    </form>
+
+                    {pairingError && (
+                      <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        <span>{pairingError}</span>
+                      </div>
+                    )}
+
+                    {pairingCode && (
+                      <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-5 text-center space-y-3">
+                        <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                          Kode Pairing 8 Digit Anda:
+                        </p>
+                        <div className="inline-flex items-center gap-3 bg-white px-5 py-3 rounded-xl border border-emerald-300 shadow-sm">
+                          <span className="text-2xl font-black font-mono tracking-widest text-slate-900">
+                            {pairingCode}
+                          </span>
+                          <button
+                            onClick={handleCopyPairingCode}
+                            className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors cursor-pointer"
+                            title="Salin Kode"
+                          >
+                            {pairingCopied ? (
+                              <Check className="w-4 h-4 text-emerald-600" />
+                            ) : (
+                              <Copy className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
+                        {pairingCopied && (
+                          <p className="text-[11px] font-bold text-emerald-700">Kode disalin ke clipboard!</p>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-xs text-slate-600 space-y-2">
+                      <p className="font-bold text-slate-800 flex items-center gap-1.5">
+                        <KeyRound className="w-4 h-4 text-emerald-600" />
+                        Cara Masukkan Kode di HP:
+                      </p>
+                      <ol className="list-decimal list-inside space-y-1 text-slate-500">
+                        <li>Buka <strong>WhatsApp</strong> di HP Anda.</li>
+                        <li>Buka <strong>Perangkat Tertaut (Linked Devices)</strong>.</li>
+                        <li>Ketuk <strong>Tautkan Perangkat</strong>.</li>
+                        <li>Di bawah layar scanner, ketuk <strong>"Tautkan dengan nomor telepon saja"</strong>.</li>
+                        <li>Ketik kode 8 digit yang muncul di atas.</li>
+                      </ol>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
             <div className="mt-6 flex justify-end">
               <button 
                 onClick={() => setQrModalDevice(null)}
-                className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors"
+                className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
               >
                 Tutup Jendela
               </button>
@@ -474,7 +677,7 @@ export default function Devices() {
                 <h3 className="text-lg font-bold text-slate-900">Kirim Pesan Tes</h3>
                 <p className="text-xs text-slate-400">Menggunakan nomor: <strong className="text-slate-700">{testModalDevice.name}</strong></p>
               </div>
-              <button onClick={() => setTestModalDevice(null)} className="text-slate-400 hover:text-slate-600 p-1">
+              <button onClick={() => setTestModalDevice(null)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -532,14 +735,14 @@ export default function Devices() {
                 <button 
                   type="button"
                   onClick={() => setTestModalDevice(null)}
-                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50"
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 cursor-pointer"
                 >
                   Batal
                 </button>
                 <button 
                   type="submit"
                   disabled={sendingTest}
-                  className="px-5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                 >
                   {sendingTest && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>Kirim Sekarang</span>
@@ -559,7 +762,7 @@ export default function Devices() {
                 <h3 className="text-lg font-bold text-slate-900">Konfigurasi Webhook</h3>
                 <p className="text-xs text-slate-400">Terima pesan masuk ke server website Anda sendiri.</p>
               </div>
-              <button onClick={() => setWebhookDevice(null)} className="text-slate-400 hover:text-slate-600 p-1">
+              <button onClick={() => setWebhookDevice(null)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -595,7 +798,7 @@ export default function Devices() {
                 <button 
                   onClick={handleTestWebhook}
                   disabled={testingWebhook || !webhookUrl}
-                  className="px-3.5 py-2 rounded-xl border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-3.5 py-2 rounded-xl border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                 >
                   {testingWebhook ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <SendIcon className="w-3.5 h-3.5" />}
                   <span>Uji Endpoint URL</span>
@@ -604,19 +807,160 @@ export default function Devices() {
                 <div className="flex gap-2">
                   <button 
                     onClick={() => setWebhookDevice(null)}
-                    className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50"
+                    className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 cursor-pointer"
                   >
                     Batal
                   </button>
                   <button 
                     onClick={handleSaveWebhook}
-                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-sm"
+                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-sm cursor-pointer"
                   >
                     Simpan Webhook
                   </button>
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: Cek Nomor WhatsApp Aktif (Validator) */}
+      {showCheckNumberModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <Search className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Cek Nomor WhatsApp</h3>
+                  <p className="text-[11px] text-slate-400">Verifikasi apakah nomor terdaftar dan aktif di WhatsApp</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowCheckNumberModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCheckNumber} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Pilih Device Penguji
+                </label>
+                <select
+                  value={checkDeviceId}
+                  onChange={(e) => setCheckDeviceId(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                >
+                  <option value="">Otomatis (Pilih Device yang Sedang Aktif)</option>
+                  {devices.map((d: any) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name} ({d.status === 'CONNECTED' ? 'Online' : 'Offline'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Nomor WhatsApp yang Dicek
+                  </label>
+                  {checkPhone.trim() && (
+                    <span className="text-[11px] font-mono font-bold text-emerald-600">
+                      +{normalizePhone(checkPhone)}
+                    </span>
+                  )}
+                </div>
+                <input 
+                  type="text" 
+                  value={checkPhone}
+                  onChange={(e) => setCheckPhone(e.target.value)}
+                  placeholder="Contoh: 08123456789 atau +628123456789" 
+                  required
+                  autoFocus
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-mono"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Format bebas: 08..., 628..., +62..., 8...
+                </p>
+              </div>
+
+              {checkError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{checkError}</span>
+                </div>
+              )}
+
+              {checkResult && (
+                <div className={clsx(
+                  "p-4 rounded-2xl border space-y-2.5 animate-in fade-in duration-200",
+                  checkResult.numberExists 
+                    ? "bg-emerald-50/80 border-emerald-200 text-emerald-950" 
+                    : "bg-rose-50/80 border-rose-200 text-rose-950"
+                )}>
+                  <div className="flex items-center gap-2 font-bold text-sm">
+                    {checkResult.numberExists ? (
+                      <>
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                        <span className="text-emerald-800">Nomor Terdaftar di WhatsApp</span>
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="w-5 h-5 text-rose-600" />
+                        <span className="text-rose-800">Nomor Tidak Terdaftar di WhatsApp</span>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="text-xs space-y-1 pt-1 border-t border-slate-200/50">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Nomor Terformat:</span>
+                      <span className="font-mono font-bold">+{checkResult.phone}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">WhatsApp JID:</span>
+                      <span className="font-mono font-medium">{checkResult.jid || '-'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Tipe Akun:</span>
+                      <span className="font-semibold">
+                        {checkResult.isBusiness ? 'WhatsApp Business' : 'WhatsApp Personal/Standar'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Status Penerimaan:</span>
+                      <span className={clsx("font-bold", checkResult.canReceiveMessage ? "text-emerald-700" : "text-rose-700")}>
+                        {checkResult.canReceiveMessage ? 'Siap Menerima Pesan' : 'Tidak Dapat Menerima'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2.5 pt-2">
+                <button 
+                  type="button"
+                  onClick={() => setShowCheckNumberModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50 cursor-pointer"
+                >
+                  Tutup
+                </button>
+                <button 
+                  type="submit"
+                  disabled={checkingNumber || !checkPhone.trim()}
+                  className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  {checkingNumber ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                  <span>Periksa Sekarang</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

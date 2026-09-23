@@ -10,18 +10,13 @@ import {
   CheckCircle2, 
   AlertCircle, 
   Clock, 
-  Sliders, 
-  Copy, 
-  ExternalLink,
-  ShieldCheck,
-  Send,
-  HelpCircle,
-  ToggleLeft,
-  ToggleRight,
+  Send, 
   Sparkles,
-  Edit2
+  Edit2,
+  RefreshCw,
+  Cpu
 } from 'lucide-react';
-import { autoReplyService } from '../services/api';
+import { autoReplyService, warmupService } from '../services/api';
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<'autoreply' | 'ai' | 'webhook' | 'system'>('autoreply');
@@ -39,10 +34,16 @@ export default function Settings() {
   const [formActive, setFormActive] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // AI Settings State (persisted to localStorage)
+  // 9routes AI State
   const [aiEnabled, setAiEnabled] = useState(() => localStorage.getItem('wagtw_ai_enabled') !== 'false');
+  const [aiBaseUrl, setAiBaseUrl] = useState('http://103.89.2.102:20128/v1');
+  const [aiApiKey, setAiApiKey] = useState('sk-abf54a1d39290d81-l74lwh-ac3e8eda');
+  const [aiModel, setAiModel] = useState('mistral/mistral-large-latest');
   const [aiSystemPrompt, setAiSystemPrompt] = useState(() => localStorage.getItem('wagtw_ai_prompt') || 'Anda adalah customer service asisten WhatsApp yang ramah, sopan, dan sigap membantu.');
-  const [aiModel, setAiModel] = useState(() => localStorage.getItem('wagtw_ai_model') || 'gemini-1.5-flash');
+  const [aiCooldown, setAiCooldown] = useState(30);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [savingAi, setSavingAi] = useState(false);
 
   // Global Webhook State
   const [globalWebhook, setGlobalWebhook] = useState(() => localStorage.getItem('wagtw_global_webhook') || '');
@@ -51,6 +52,7 @@ export default function Settings() {
 
   useEffect(() => {
     fetchRules();
+    loadAiConfig();
   }, []);
 
   const fetchRules = async () => {
@@ -63,6 +65,65 @@ export default function Settings() {
       setBanner({ type: 'error', message: 'Gagal memuat aturan auto-reply: ' + (err.message || 'Error') });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadAiConfig = async () => {
+    try {
+      const res = await warmupService.getConfig();
+      if (res.data) {
+        if (res.data.aiBaseUrl) setAiBaseUrl(res.data.aiBaseUrl);
+        if (res.data.aiApiKey) setAiApiKey(res.data.aiApiKey);
+        if (res.data.aiModel) setAiModel(res.data.aiModel);
+      }
+    } catch (err) {
+      console.warn('Could not load warmup config, using 9routes defaults');
+    }
+  };
+
+  const handleFetch9routesModels = async () => {
+    setFetchingModels(true);
+    try {
+      const res = await warmupService.fetchModels(aiBaseUrl, aiApiKey);
+      const list = res.data?.models || res.data || [];
+      if (Array.isArray(list) && list.length > 0) {
+        setAvailableModels(list);
+        if (!list.includes(aiModel)) {
+          setAiModel(list[0]);
+        }
+        setBanner({ type: 'success', message: `Berhasil memuat ${list.length} model dari 9routes AI!` });
+      } else {
+        setBanner({ type: 'error', message: 'Daftar model kosong dari server 9routes.' });
+      }
+      setTimeout(() => setBanner(null), 3500);
+    } catch (err: any) {
+      setBanner({ type: 'error', message: 'Gagal memindai model 9routes: ' + (err.response?.data?.error || err.message) });
+    } finally {
+      setFetchingModels(false);
+    }
+  };
+
+  const handleSaveAiSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingAi(true);
+    try {
+      localStorage.setItem('wagtw_ai_enabled', String(aiEnabled));
+      localStorage.setItem('wagtw_ai_prompt', aiSystemPrompt);
+      localStorage.setItem('wagtw_ai_model', aiModel);
+
+      // Also persist to backend warmupConfig so Worker can use the exact same 9routes settings
+      await warmupService.updateConfig({
+        aiBaseUrl,
+        aiApiKey,
+        aiModel
+      });
+
+      setBanner({ type: 'success', message: 'Konfigurasi 9routes AI berhasil disimpan dan disinkronkan!' });
+      setTimeout(() => setBanner(null), 3000);
+    } catch (err: any) {
+      setBanner({ type: 'error', message: 'Gagal menyimpan konfigurasi: ' + (err.response?.data?.error || err.message) });
+    } finally {
+      setSavingAi(false);
     }
   };
 
@@ -146,15 +207,6 @@ export default function Settings() {
     }
   };
 
-  const handleSaveAiSettings = (e: React.FormEvent) => {
-    e.preventDefault();
-    localStorage.setItem('wagtw_ai_enabled', String(aiEnabled));
-    localStorage.setItem('wagtw_ai_prompt', aiSystemPrompt);
-    localStorage.setItem('wagtw_ai_model', aiModel);
-    setBanner({ type: 'success', message: 'Pengaturan AI Gemini berhasil disimpan!' });
-    setTimeout(() => setBanner(null), 3000);
-  };
-
   const handleSaveWebhook = (e: React.FormEvent) => {
     e.preventDefault();
     localStorage.setItem('wagtw_global_webhook', globalWebhook);
@@ -170,7 +222,6 @@ export default function Settings() {
     setWebhookTesting(true);
     setWebhookResult(null);
     try {
-      // Send sample ping payload via backend
       const res = await fetch(globalWebhook, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -203,7 +254,7 @@ export default function Settings() {
             Pengaturan Sistem & Automasi
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Konfigurasi Auto-Reply pintar, integrasi AI Gemini, webhook notifikasi, dan status gateway WhatsApp.
+            Konfigurasi Auto-Reply pintar, engine 9routes AI, global webhook, dan arsitektur gateway WhatsApp.
           </p>
         </div>
 
@@ -258,7 +309,7 @@ export default function Settings() {
           }`}
         >
           <Bot className="w-3.5 h-3.5" />
-          <span>Asisten AI Gemini</span>
+          <span>Asisten 9routes AI</span>
         </button>
 
         <button
@@ -295,7 +346,7 @@ export default function Settings() {
                 Daftar Aturan Balasan Otomatis
               </h3>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Pesan WhatsApp masuk yang cocok dengan kata kunci akan langsung dibalas otomatis sesuai aturan.
+                Pesan WhatsApp masuk yang cocok dengan kata kunci akan langsung dibalas otomatis via teks template atau 9routes AI.
               </p>
             </div>
             <button
@@ -318,7 +369,7 @@ export default function Settings() {
               </div>
               <h3 className="text-sm font-bold text-slate-800">Belum Ada Aturan Auto-Reply</h3>
               <p className="text-xs text-slate-500 max-w-md mx-auto">
-                Buat aturan kata kunci seperti "halo", "order", atau "harga", lalu tentukan balasan otomatis atau aktifkan AI Gemini.
+                Buat aturan kata kunci seperti "halo", "order", atau "harga", lalu tentukan balasan otomatis atau aktifkan 9routes AI.
               </p>
               <button
                 onClick={openCreateModal}
@@ -346,7 +397,7 @@ export default function Settings() {
                           {rule.isAi ? (
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
                               <Sparkles className="w-3 h-3 text-emerald-600" />
-                              Gemini AI Assistant
+                              9routes AI Assistant
                             </span>
                           ) : (
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1">
@@ -386,7 +437,7 @@ export default function Settings() {
                             </code>
                           ) : (
                             <span className="text-xs italic text-emerald-700 font-semibold">
-                              (Semua Pesan Masuk / Fallback)
+                              (Semua Pesan Masuk / 9routes Fallback)
                             </span>
                           )}
                         </div>
@@ -399,7 +450,7 @@ export default function Settings() {
                         </span>
                         <p className="text-xs text-slate-700 mt-1 bg-slate-50 p-2.5 rounded-lg border border-slate-100 line-clamp-3 leading-relaxed">
                           {rule.isAi
-                            ? 'Dibalas otomatis secara cerdas oleh Google Gemini AI berdasarkan pertanyaan dan persona sistem.'
+                            ? 'Dibalas otomatis oleh 9routes AI berdasarkan konteks chat dan persona sistem toko Anda.'
                             : rule.response || '—'}
                         </p>
                       </div>
@@ -433,17 +484,17 @@ export default function Settings() {
         </div>
       )}
 
-      {/* TAB 2: AI GEMINI SETTINGS */}
+      {/* TAB 2: 9ROUTES AI SETTINGS */}
       {activeTab === 'ai' && (
         <form onSubmit={handleSaveAiSettings} className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-5">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <div>
               <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-emerald-600" />
-                Konfigurasi Google Gemini AI
+                <Cpu className="w-4 h-4 text-emerald-600" />
+                Konfigurasi 9routes AI Engine
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Gunakan kecerdasan buatan Gemini untuk membalas chat customer otomatis 24/7 seperti CS profesional.
+                Menggunakan gateway 9routes AI untuk membalas chat WhatsApp pelanggan secara natural & otomatis 24/7.
               </p>
             </div>
             <label className="flex items-center gap-2 cursor-pointer">
@@ -463,18 +514,73 @@ export default function Settings() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
-                Pilih Model Gemini
+                9routes Base URL
               </label>
-              <select
-                value={aiModel}
-                onChange={(e) => setAiModel(e.target.value)}
-                className="w-full px-3 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              >
-                <option value="gemini-1.5-flash">Gemini 1.5 Flash (Sangat Cepat & Direkomendasikan)</option>
-                <option value="gemini-1.5-pro">Gemini 1.5 Pro (Kemampuan Analisis Lebih Tinggi)</option>
-              </select>
+              <input
+                type="text"
+                required
+                value={aiBaseUrl}
+                onChange={(e) => setAiBaseUrl(e.target.value)}
+                placeholder="http://103.89.2.102:20128/v1"
+                className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+              <p className="text-[11px] text-slate-400 mt-1">Endpoint API kompatibel OpenAI milik server 9routes.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
+                API Key 9routes
+              </label>
+              <input
+                type="password"
+                required
+                value={aiApiKey}
+                onChange={(e) => setAiApiKey(e.target.value)}
+                placeholder="sk-xxxxxxxxxxxxxxxx"
+                className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+              <p className="text-[11px] text-slate-400 mt-1">Kunci autentikasi Bearer Token 9routes.</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
+                  Model 9routes AI
+                </label>
+                <button
+                  type="button"
+                  onClick={handleFetch9routesModels}
+                  disabled={fetchingModels}
+                  className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className={`w-3 h-3 ${fetchingModels ? 'animate-spin' : ''}`} />
+                  <span>{fetchingModels ? 'Memindai...' : 'Pindai Model 9routes'}</span>
+                </button>
+              </div>
+
+              {availableModels.length > 0 ? (
+                <select
+                  value={aiModel}
+                  onChange={(e) => setAiModel(e.target.value)}
+                  className="w-full px-3 py-2 text-xs font-mono font-semibold bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                >
+                  {availableModels.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={aiModel}
+                  onChange={(e) => setAiModel(e.target.value)}
+                  placeholder="mistral/mistral-large-latest"
+                  className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              )}
               <p className="text-[11px] text-slate-400 mt-1">
-                Menggunakan kunci API resmi dari file konfigurasi environment server (GEMINI_API_KEY).
+                Rekomendasi: <code>mistral/mistral-large-latest</code> atau klik tombol 'Pindai Model'.
               </p>
             </div>
 
@@ -485,15 +591,16 @@ export default function Settings() {
               <div className="flex items-center gap-2">
                 <input
                   type="number"
-                  defaultValue={30}
                   min={5}
                   max={600}
+                  value={aiCooldown}
+                  onChange={(e) => setAiCooldown(Number(e.target.value))}
                   className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
                 <span className="text-xs font-semibold text-slate-500 shrink-0">Detik</span>
               </div>
               <p className="text-[11px] text-slate-400 mt-1">
-                Mencegah bot mengirim respon ganda jika kontak mengirim pesan beruntun dalam waktu singkat.
+                Mencegah bot mengirim respon ganda jika kontak mengirim chat bertubi-tubi.
               </p>
             </div>
           </div>
@@ -503,24 +610,25 @@ export default function Settings() {
               Instruksi Sistem / Persona CS (System Prompt)
             </label>
             <textarea
-              rows={5}
+              rows={4}
               value={aiSystemPrompt}
               onChange={(e) => setAiSystemPrompt(e.target.value)}
-              placeholder="Jelaskan peran AI, info produk, jam operasional, dan gaya bahasa..."
+              placeholder="Jelaskan peran AI, produk/jasa, jam operasional, dan gaya bahasa..."
               className="w-full px-3 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none leading-relaxed"
             />
             <p className="text-[11px] text-slate-400 mt-1">
-              Tips: Tuliskan informasi harga barang, nomor rekening, alamat toko, atau instruksi FAQ agar AI menjawab secara akurat.
+              Tips: Tuliskan informasi harga barang, nomor rekening, alamat toko, atau instruksi FAQ agar 9routes AI menjawab akurat.
             </p>
           </div>
 
           <div className="flex justify-end pt-2">
             <button
               type="submit"
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+              disabled={savingAi}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Simpan Pengaturan AI</span>
+              <span>{savingAi ? 'Menyimpan...' : 'Simpan Konfigurasi 9routes AI'}</span>
             </button>
           </div>
         </form>
@@ -626,6 +734,12 @@ export default function Settings() {
             </div>
 
             <div className="p-4 rounded-xl border border-slate-100 bg-slate-50 space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">AI Gateway</span>
+              <p className="text-sm font-mono font-bold text-emerald-800">9routes AI</p>
+              <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">Active / Mistral & LLM</span>
+            </div>
+
+            <div className="p-4 rounded-xl border border-slate-100 bg-slate-50 space-y-1">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Database Engine</span>
               <p className="text-sm font-mono font-bold text-slate-900">PostgreSQL 16</p>
               <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">Prisma ORM Connected</span>
@@ -635,12 +749,6 @@ export default function Settings() {
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Zona Waktu Klien</span>
               <p className="text-sm font-mono font-bold text-slate-900">{userTimeZone}</p>
               <span className="text-[10px] text-slate-500 font-mono">Auto-detected Browser</span>
-            </div>
-
-            <div className="p-4 rounded-xl border border-slate-100 bg-slate-50 space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Format Auto-Detect Nomor</span>
-              <p className="text-sm font-mono font-bold text-emerald-800">08xxx ➔ +628xxx</p>
-              <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">Aktif Otomatis</span>
             </div>
 
             <div className="p-4 rounded-xl border border-slate-100 bg-slate-50 space-y-1">
@@ -714,10 +822,10 @@ export default function Settings() {
                   >
                     <div className="flex items-center gap-2 mb-1">
                       <Sparkles className="w-4 h-4 text-emerald-600" />
-                      <span className="text-xs font-bold text-slate-900">Gemini AI</span>
+                      <span className="text-xs font-bold text-slate-900">9routes AI</span>
                     </div>
                     <p className="text-[10px] text-slate-500 leading-tight">
-                      Dibalas cerdas oleh AI berdasarkan konteks pertanyaan.
+                      Dibalas cerdas oleh 9routes AI berdasarkan konteks pertanyaan.
                     </p>
                   </button>
                 </div>
@@ -732,12 +840,12 @@ export default function Settings() {
                   type="text"
                   value={formKeyword}
                   onChange={(e) => setFormKeyword(e.target.value)}
-                  placeholder={formMode === 'ai' ? 'Kosongkan jika ingin jadi AI Fallback semua pesan' : 'Contoh: halo / info / harga / order'}
+                  placeholder={formMode === 'ai' ? 'Kosongkan jika ingin jadi 9routes AI Fallback semua pesan' : 'Contoh: halo / info / harga / order'}
                   className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
                 <p className="text-[10px] text-slate-400 mt-1">
                   {formMode === 'ai'
-                    ? 'Jika dikosongkan, AI akan menjawab setiap pesan yang tidak cocok dengan kata kunci teks lainnya.'
+                    ? 'Jika dikosongkan, 9routes AI akan menjawab setiap pesan yang tidak cocok dengan kata kunci teks lainnya.'
                     : 'Pesan pelanggan yang mengandung kata ini akan langsung memicu balasan.'}
                 </p>
               </div>

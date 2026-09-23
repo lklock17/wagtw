@@ -83,6 +83,23 @@ const ENDPOINTS: EndpointDef[] = [
       { name: 'deviceId', type: 'string', required: false, description: '"rotate" atau ID device' }
     ]
   },
+  {
+    id: 'msg-check-number',
+    category: 'Messages & Auto-Rotate Engine',
+    method: 'POST',
+    path: '/api/messages/check-number',
+    summary: 'Cek Status Nomor WhatsApp (Validasi Aktif / Tidak)',
+    description: 'Memeriksa apakah suatu nomor telepon terdaftar dan aktif di WhatsApp tanpa mengirim pesan apapun. Cocok untuk integrasi dengan sistem/website lain guna validasi nomor prospek/pelanggan sebelum broadcast.',
+    requiresAuth: true,
+    defaultPayload: {
+      phone: "081234567890",
+      deviceId: ""
+    },
+    bodyParams: [
+      { name: 'phone', type: 'string', required: true, description: 'Nomor telepon yang ingin diverifikasi (format bebas: 08xxx, 628xxx, +62xxx)' },
+      { name: 'deviceId', type: 'string', required: false, description: 'Opsional: ID device aktif tertentu (otomatis memilih device online jika dikosongkan)' }
+    ]
+  },
 
   // 2. WhatsApp Devices
   {
@@ -119,6 +136,21 @@ const ENDPOINTS: EndpointDef[] = [
     requiresAuth: true,
     queryParams: [
       { name: 'id', type: 'string', required: true, description: 'ID device yang ingin di-scan' }
+    ]
+  },
+  {
+    id: 'dev-pairing-code',
+    category: 'WhatsApp Devices',
+    method: 'POST',
+    path: '/api/devices/{id}/pairing-code',
+    summary: 'Minta Kode Pairing 8-Digit (Login Tanpa QR)',
+    description: 'Menghasilkan 8 karakter kode pairing WhatsApp untuk ditautkan via opsi "Tautkan dengan nomor telepon saja" pada aplikasi WhatsApp ponsel.',
+    requiresAuth: true,
+    defaultPayload: {
+      phone: "081234567890"
+    },
+    bodyParams: [
+      { name: 'phone', type: 'string', required: true, description: 'Nomor telepon WhatsApp Anda yang akan ditautkan' }
     ]
   },
 

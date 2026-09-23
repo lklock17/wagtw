@@ -67,6 +67,17 @@ app.post('/messages/send', async (req, res) => {
   const jid = formatToWhatsAppJid(to);
 
   try {
+    // Humanized typing simulation before sending text (1.2s - 2.0s)
+    try {
+      if (typeof (client as any).startTyping === 'function') {
+        const typingDuration = Math.floor(Math.random() * 800) + 1200;
+        await (client as any).startTyping(jid, typingDuration);
+        await new Promise((r) => setTimeout(r, typingDuration));
+      }
+    } catch (tErr) {
+      // Non-blocking
+    }
+
     let result;
     if (type === 'IMAGE' && url) {
       result = await client.sendImage(jid, url, 'image-name', caption);
@@ -80,6 +91,59 @@ app.post('/messages/send', async (req, res) => {
   } catch (error: any) {
     console.error(`Failed to send message via worker to ${jid}:`, error);
     res.status(500).json({ error: error?.message || 'Failed to send message via worker' });
+  }
+});
+
+// Endpoint to check if phone number is registered & active on WhatsApp
+app.post('/devices/:deviceId/check-number', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  const { phone } = req.body;
+
+  if (!phone) {
+    return res.status(400).json({ error: 'phone is required' });
+  }
+
+  const client = await waManager.getClient(deviceId);
+  if (!client) {
+    return res.status(404).json({ error: 'Device session not active or not connected' });
+  }
+
+  const jid = formatToWhatsAppJid(phone);
+
+  try {
+    const profile = await client.checkNumberStatus(jid);
+    const isValid = Boolean(profile && ((profile as any).numberExists !== false && profile.status === 200));
+
+    res.json({
+      success: true,
+      phone,
+      jid,
+      isValid,
+      isBusiness: Boolean((profile as any)?.isBusiness),
+      canReceiveMessage: Boolean((profile as any)?.canReceiveMessage !== false),
+      raw: profile
+    });
+  } catch (error: any) {
+    console.error(`Failed to check number status for ${phone}:`, error.message);
+    res.status(500).json({ success: false, error: error.message, phone });
+  }
+});
+
+// Endpoint to request 8-digit Pairing Code for phone linking
+app.post('/devices/:deviceId/pairing-code', async (req: Request, res: Response) => {
+  const { deviceId } = req.params;
+  const { phone } = req.body;
+
+  if (!phone) {
+    return res.status(400).json({ error: 'phone is required' });
+  }
+
+  try {
+    const code = await waManager.requestPairingCode(deviceId, phone);
+    res.json({ success: true, deviceId, phone, code });
+  } catch (error: any) {
+    console.error(`Failed to request pairing code for device ${deviceId}:`, error.message);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

@@ -65,15 +65,68 @@ class WhatsAppManager {
         useChrome: false,
         debug: false,
         logQR: false,
+        puppeteerOptions: {
+          defaultViewport: {
+            width: 1920,
+            height: 1080,
+            deviceScaleFactor: 1,
+            isMobile: false,
+            hasTouch: false,
+            isLandscape: true
+          }
+        },
         browserArgs: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--no-first-run',
-          '--no-zygote'
+          '--no-zygote',
+          '--window-size=1920,1080',
+          '--lang=id-ID,id,en-US,en',
+          '--disable-blink-features=AutomationControlled'
         ],
       });
+
+      // Apply Human-Like Fingerprint & Stealth Hardware Masking
+      try {
+        const page = (client as any).page;
+        if (page && typeof page.evaluateOnNewDocument === 'function') {
+          await page.evaluateOnNewDocument(() => {
+            // 1. Hide Webdriver automation flag
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            // 2. Realistic Desktop Hardware: 8 Core CPU, 8GB RAM
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+            // 3. Languages: Indonesian + English
+            Object.defineProperty(navigator, 'languages', { get: () => ['id-ID', 'id', 'en-US', 'en'] });
+            // 4. Chrome Runtime Object
+            (window as any).chrome = {
+              runtime: {},
+              loadTimes: function() {},
+              csi: function() {},
+              app: {}
+            };
+            // 5. Plugins spoofing
+            Object.defineProperty(navigator, 'plugins', {
+              get: () => [
+                { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+              ]
+            });
+            // 6. WebGL Vendor & Renderer spoofing (Intel Iris Xe Graphics)
+            const getParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {
+              if (parameter === 37445) return 'Intel Inc.';
+              if (parameter === 37446) return 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0)';
+              return getParameter.apply(this, [parameter]);
+            };
+          });
+        }
+      } catch (fpErr: any) {
+        console.warn('Could not inject full stealth fingerprint:', fpErr.message);
+      }
 
       this.sessions.set(deviceId, client);
       this.setupEventListeners(deviceId, client);
@@ -225,6 +278,18 @@ class WhatsAppManager {
 
         if (responseText && message.from && (now - lastSent >= ruleCooldown * 1000)) {
           this.cooldowns.set(cooldownKey, now);
+
+          // Human-like typing simulation before auto-reply (1.2s - 2.0s)
+          try {
+            if (typeof (client as any).startTyping === 'function') {
+              const typingTime = Math.floor(Math.random() * 800) + 1200;
+              await (client as any).startTyping(message.from, typingTime);
+              await new Promise((r) => setTimeout(r, typingTime));
+            }
+          } catch (tErr) {
+            // Non-blocking
+          }
+
           await client.sendText(message.from, responseText);
           // Log the reply
           await prisma.inboxMessage.create({
@@ -243,6 +308,92 @@ class WhatsAppManager {
 
   async getClient(deviceId: string) {
     return this.sessions.get(deviceId);
+  }
+
+  async requestPairingCode(deviceId: string, phoneNumber: string): Promise<string> {
+    const client = this.sessions.get(deviceId);
+    if (!client) throw new Error('Device session is not initializing or not found. Pastikan device dalam proses inisialisasi.');
+
+    const page = (client as any).page;
+    if (!page) throw new Error('Browser page not available');
+
+    // Clean phone number to digits only (e.g. 62817101337)
+    let cleaned = phoneNumber.replace(/[^0-9]/g, '');
+    if (cleaned.startsWith('0')) cleaned = '62' + cleaned.substring(1);
+    else if (cleaned.startsWith('8')) cleaned = '62' + cleaned;
+
+    const code = await page.evaluate(async (phone: string) => {
+      // 1. Look for the "Link with phone number" button
+      const allSpans = Array.from(document.querySelectorAll('span, div[role="button"]'));
+      const linkButton = allSpans.find((el: any) => {
+        const txt = (el.textContent || '').toLowerCase();
+        return txt.includes('link with phone number') || 
+               txt.includes('tautkan dengan nomor telepon') ||
+               txt.includes('link with phone') ||
+               txt.includes('tautkan dengan nomor');
+      });
+
+      if (linkButton) {
+        (linkButton as HTMLElement).click();
+      }
+
+      await new Promise((r) => setTimeout(r, 1200));
+
+      // 2. Find phone input
+      const inputs = Array.from(document.querySelectorAll('input'));
+      const phoneInput = inputs.find((i: any) => i.type === 'text' || i.getAttribute('aria-label')?.includes('phone') || i.inputMode === 'numeric') || inputs[inputs.length - 1];
+
+      if (phoneInput) {
+        phoneInput.focus();
+        phoneInput.value = '';
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+        if (nativeSetter) {
+          nativeSetter.call(phoneInput, phone);
+        } else {
+          phoneInput.value = phone;
+        }
+        phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
+        phoneInput.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+
+      await new Promise((r) => setTimeout(r, 800));
+
+      // 3. Click Next button
+      const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
+      const nextBtn = buttons.find((b: any) => {
+        const txt = (b.textContent || '').toLowerCase();
+        return txt === 'next' || txt === 'lanjut' || txt === 'lanjutkan';
+      });
+
+      if (nextBtn) {
+        (nextBtn as HTMLElement).click();
+      }
+
+      // 4. Wait for 8-char code display
+      await new Promise((r) => setTimeout(r, 2500));
+
+      // Check elements with 8-character pairing code format (e.g. ABCD-1234 or 8 digits)
+      for (const el of Array.from(document.querySelectorAll('*'))) {
+        const text = (el.textContent || '').trim();
+        if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(text)) {
+          return text;
+        }
+      }
+
+      const codeChars = Array.from(document.querySelectorAll('div[data-testid*="code"], div[aria-label*="code"], span'))
+        .filter((el: any) => /^[A-Z0-9]{4}-[A-Z0-9]{4}$|^[A-Z0-9]{8}$/.test((el.textContent || '').trim()));
+
+      if (codeChars.length > 0) {
+        return codeChars[0].textContent?.trim();
+      }
+
+      return null;
+    }, cleaned);
+
+    if (!code) {
+      throw new Error('Gagal mendapatkan Pairing Code dari WhatsApp Web. Pastikan nomor benar atau gunakan Scan QR.');
+    }
+    return code;
   }
 
   async logout(deviceId: string) {

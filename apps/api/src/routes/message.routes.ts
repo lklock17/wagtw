@@ -4,5 +4,6 @@ import * as messageController from '../controllers/message.controller';
 const router = Router();
 
 router.post('/send', messageController.sendMessage);
+router.post('/check-number', messageController.checkNumberGlobal);
 
 export default router;

@@ -81,3 +81,41 @@ export const testWebhook = async (req: Request, res: Response) => {
     res.status(400).json({ success: false, error: error.message });
   }
 };
+
+export const checkNumber = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { phone } = req.body;
+
+  if (!phone) {
+    return res.status(400).json({ success: false, error: 'Nomor telepon ("phone") wajib diisi' });
+  }
+
+  try {
+    const response = await axios.post(`${WORKER_URL}/devices/${id}/check-number`, { phone }, { timeout: 10000 });
+    res.json(response.data);
+  } catch (error: any) {
+    res.status(error.response?.status || 500).json({
+      success: false,
+      error: error.response?.data?.error || error.message
+    });
+  }
+};
+
+export const getPairingCode = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { phone } = req.body;
+
+  if (!phone) {
+    return res.status(400).json({ success: false, error: 'Nomor telepon ("phone") wajib diisi' });
+  }
+
+  try {
+    const response = await axios.post(`${WORKER_URL}/devices/${id}/pairing-code`, { phone }, { timeout: 15000 });
+    res.json(response.data);
+  } catch (error: any) {
+    res.status(error.response?.status || 500).json({
+      success: false,
+      error: error.response?.data?.error || error.message
+    });
+  }
+};
