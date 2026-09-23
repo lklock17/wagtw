@@ -139,14 +139,23 @@ export default function Devices() {
     }
   };
 
+  const normalizePhone = (input: string) => {
+    let cleaned = input.replace(/[^0-9]/g, '');
+    if (cleaned.startsWith('0')) {
+      cleaned = '62' + cleaned.substring(1);
+    } else if (cleaned.startsWith('8')) {
+      cleaned = '62' + cleaned;
+    }
+    return cleaned;
+  };
+
   const handleSendTestMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!testModalDevice || !testPhone.trim()) return;
     setSendingTest(true);
     setTestSentStatus(null);
     try {
-      // Format number to international digits
-      const formattedTo = testPhone.replace(/[^0-9]/g, '');
+      const formattedTo = normalizePhone(testPhone);
       await messageService.sendMessage({
         deviceId: testModalDevice.id,
         to: formattedTo,
@@ -472,18 +481,29 @@ export default function Devices() {
 
             <form onSubmit={handleSendTestMessage} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Nomor Tujuan WhatsApp
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Nomor Tujuan WhatsApp
+                  </label>
+                  {testPhone.trim() && (
+                    <span className={`text-[11px] font-mono font-bold ${
+                      normalizePhone(testPhone).length >= 10 ? 'text-emerald-600' : 'text-amber-500'
+                    }`}>
+                      Format WA: +{normalizePhone(testPhone)}
+                    </span>
+                  )}
+                </div>
                 <input 
                   type="text" 
                   value={testPhone}
                   onChange={(e) => setTestPhone(e.target.value)}
-                  placeholder="Contoh: 6281234567890" 
+                  placeholder="Contoh: 0817101337 / +62817101337" 
                   required
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-mono"
                 />
-                <p className="text-[11px] text-slate-400 mt-1">Gunakan format kode negara (misal 628xxx tanpa tanda + atau spasi).</p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Bisa diawali 08..., 628..., +62..., atau 8... (otomatis diubah ke format internasional WhatsApp).
+                </p>
               </div>
 
               <div>

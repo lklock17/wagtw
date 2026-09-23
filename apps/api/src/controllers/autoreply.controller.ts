@@ -26,3 +26,24 @@ export const deleteRule = async (req: Request, res: Response) => {
   await prisma.autoReplyRule.delete({ where: { id } });
   res.json({ success: true });
 };
+
+export const updateRule = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { keyword, response, isAi, cooldown, isActive } = req.body;
+  
+  try {
+    const rule = await prisma.autoReplyRule.update({
+      where: { id },
+      data: {
+        ...(keyword !== undefined ? { keyword } : {}),
+        ...(response !== undefined ? { response } : {}),
+        ...(isAi !== undefined ? { isAi: Boolean(isAi) } : {}),
+        ...(cooldown !== undefined ? { cooldown: Number(cooldown) } : {}),
+        ...(isActive !== undefined ? { isActive: Boolean(isActive) } : {}),
+      }
+    });
+    res.json(rule);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};

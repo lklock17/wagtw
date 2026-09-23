@@ -1,6 +1,8 @@
 import * as wppconnect from '@wppconnect-team/wppconnect';
 import { prisma } from '@wagtw/database';
 import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
 import { aiService } from './ai';
 
 class WhatsAppManager {
@@ -20,6 +22,20 @@ class WhatsAppManager {
 
   async createSession(deviceId: string, sessionName: string) {
     const safeSession = `dev_${deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
+    // Clean up any stale singleton locks from previous abruptly terminated browser processes
+    try {
+      const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
+      for (const lockFile of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+        const p = path.join(tokenDir, lockFile);
+        if (fs.existsSync(p)) {
+          fs.unlinkSync(p);
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
     try {
       const client = await wppconnect.create({
         session: safeSession,
@@ -43,6 +59,7 @@ class WhatsAppManager {
         },
         autoClose: 0,
         deviceSyncTimeout: 0,
+        whatsappVersion: '',
         headless: true,
         devtools: false,
         useChrome: false,
@@ -127,6 +144,10 @@ class WhatsAppManager {
       // 1. Save to Inbox
       if (!message.from || !message.body) return;
 
+      const isImage = message.body.startsWith('/9j/') || message.body.startsWith('data:image/') || message.type === 'image';
+      const snippet = isImage ? '📷 [Foto / Gambar]' : message.body;
+      const msgType = isImage ? 'IMAGE' : (message.type === 'video' ? 'VIDEO' : 'TEXT');
+
       const thread = await prisma.inboxThread.upsert({
         where: {
           deviceId_remoteNumber: {
@@ -135,13 +156,13 @@ class WhatsAppManager {
           }
         },
         update: {
-          lastMessage: message.body,
+          lastMessage: snippet,
           unreadCount: { increment: 1 }
         },
         create: {
           deviceId,
           remoteNumber: message.from,
-          lastMessage: message.body,
+          lastMessage: snippet,
           unreadCount: 1
         }
       });
@@ -152,7 +173,7 @@ class WhatsAppManager {
           deviceId,
           fromMe: message.fromMe,
           body: message.body,
-          type: 'TEXT', // Expand based on message.type
+          type: msgType as any,
           metadata: message as any
         }
       });

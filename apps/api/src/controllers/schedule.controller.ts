@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '@wagtw/database';
+import { normalizePhoneNumber } from '../utils/phone';
 
 export const getSchedules = async (req: Request, res: Response) => {
   const schedules = await prisma.scheduledMessage.findMany({
@@ -11,11 +12,12 @@ export const getSchedules = async (req: Request, res: Response) => {
 
 export const createSchedule = async (req: Request, res: Response) => {
   const { deviceId, to, body, scheduledAt } = req.body;
+  const normalizedTo = normalizePhoneNumber(to);
   
   const schedule = await prisma.scheduledMessage.create({
     data: {
       deviceId,
-      to,
+      to: normalizedTo,
       body,
       scheduledAt: new Date(scheduledAt),
       status: 'PENDING'

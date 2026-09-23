@@ -18,7 +18,7 @@ export default function Scheduling() {
   const [schedules, setSchedules] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [banner, setBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Form State
   const [selectedDevice, setSelectedDevice] = useState('');
@@ -60,30 +60,51 @@ export default function Scheduling() {
     }
   };
 
+  // Detect Client Timezone
+  const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Jakarta';
+  const tzOffset = -new Date().getTimezoneOffset() / 60;
+  const tzLabel = `${userTimeZone} (GMT${tzOffset >= 0 ? '+' : ''}${tzOffset})`;
+
+  const normalizePhone = (input: string) => {
+    let cleaned = input.replace(/[^0-9]/g, '');
+    if (cleaned.startsWith('0')) {
+      cleaned = '62' + cleaned.substring(1);
+    } else if (cleaned.startsWith('8')) {
+      cleaned = '62' + cleaned;
+    }
+    return cleaned;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDevice || !targetNumber || !message || !scheduledAt) {
-      setAlert({ type: 'error', message: 'Harap lengkapi semua kolom isian jadwal.' });
+      setBanner({ type: 'error', message: 'Harap lengkapi semua kolom isian jadwal.' });
+      return;
+    }
+
+    const normalizedTo = normalizePhone(targetNumber);
+    if (normalizedTo.length < 9) {
+      setBanner({ type: 'error', message: 'Nomor WhatsApp tidak valid (minimal 9 digit).' });
       return;
     }
 
     setSubmitting(true);
-    setAlert(null);
+    setBanner(null);
     try {
       await scheduleService.createSchedule({
         deviceId: selectedDevice,
-        to: targetNumber.replace(/[^0-9]/g, ''),
+        to: normalizedTo,
         body: message,
         scheduledAt: new Date(scheduledAt).toISOString()
       });
-      setAlert({ type: 'success', message: 'Pesan terjadwal berhasil disimpan!' });
+      setBanner({ type: 'success', message: `Pesan terjadwal berhasil disimpan untuk +${normalizedTo}!` });
       setTargetNumber('');
       setMessage('');
       setScheduledAt('');
       fetchSchedules();
-      setTimeout(() => setAlert(null), 3000);
+      setTimeout(() => setBanner(null), 3000);
     } catch (err: any) {
-      setAlert({ type: 'error', message: 'Gagal membuat jadwal: ' + (err.response?.data?.error || err.message) });
+      setBanner({ type: 'error', message: 'Gagal membuat jadwal: ' + (err.response?.data?.error || err.message) });
     } finally {
       setSubmitting(false);
     }
@@ -117,23 +138,23 @@ export default function Scheduling() {
         </div>
       </div>
 
-      {alert && (
+      {banner && (
         <div
           className={`p-3.5 rounded-xl text-xs font-semibold flex items-center justify-between border ${
-            alert.type === 'success'
+            banner.type === 'success'
               ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
               : 'bg-rose-50 text-rose-800 border-rose-200'
           }`}
         >
           <div className="flex items-center gap-2">
-            {alert.type === 'success' ? (
+            {banner.type === 'success' ? (
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
             ) : (
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
             )}
-            <span>{alert.message}</span>
+            <span>{banner.message}</span>
           </div>
-          <button onClick={() => setAlert(null)} className="text-slate-400 hover:text-slate-700">✕</button>
+          <button onClick={() => setBanner(null)} className="text-slate-400 hover:text-slate-700">✕</button>
         </div>
       )}
 
@@ -142,9 +163,14 @@ export default function Scheduling() {
         {/* Left: Schedule Form (5 Cols) */}
         <div className="lg:col-span-5">
           <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs space-y-3.5">
-            <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
-              <Calendar className="w-4 h-4 text-emerald-600" />
-              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Buat Jadwal Baru</h3>
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-emerald-600" />
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Buat Jadwal Baru</h3>
+              </div>
+              <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                Auto-Timezone: {userTimeZone}
+              </span>
             </div>
 
             <div>
@@ -169,23 +195,40 @@ export default function Scheduling() {
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                Nomor Tujuan (WhatsApp)
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Nomor Tujuan (WhatsApp)
+                </label>
+                {targetNumber.trim() && (
+                  <span className={`text-[10px] font-mono font-bold ${
+                    normalizePhone(targetNumber).length >= 10 ? 'text-emerald-600' : 'text-amber-500'
+                  }`}>
+                    WA: +{normalizePhone(targetNumber)}
+                  </span>
+                )}
+              </div>
               <input
                 type="text"
                 required
                 value={targetNumber}
                 onChange={(e) => setTargetNumber(e.target.value)}
-                placeholder="08xxxxxxxxxx"
+                placeholder="Contoh: 0817101337 / +62817101337"
                 className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
               />
+              <p className="text-[10px] text-slate-400 mt-1">
+                Bisa diawali 08..., 628..., +628..., atau 8... (otomatis diubah ke format WhatsApp).
+              </p>
             </div>
 
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                Waktu & Tanggal Kirim
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Waktu & Tanggal Kirim
+                </label>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  {tzLabel}
+                </span>
+              </div>
               <input
                 type="datetime-local"
                 required
@@ -193,6 +236,9 @@ export default function Scheduling() {
                 onChange={(e) => setScheduledAt(e.target.value)}
                 className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
               />
+              <p className="text-[10px] text-slate-400 mt-1">
+                Otomatis disinkronkan dengan waktu lokal komputer Anda ({tzLabel}).
+              </p>
             </div>
 
             <div>
@@ -264,15 +310,13 @@ export default function Scheduling() {
                         >
                           {item.status}
                         </span>
-                        {item.status === 'PENDING' && (
-                          <button
-                            onClick={() => handleDelete(item.id)}
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors cursor-pointer"
-                            title="Batalkan"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+                        <button
+                          onClick={() => handleDelete(item.id)}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors cursor-pointer"
+                          title="Hapus Jadwal"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
 
@@ -280,8 +324,14 @@ export default function Scheduling() {
                       {item.body}
                     </p>
 
+                    {item.error && (
+                      <div className="text-[10px] text-rose-600 bg-rose-50 border border-rose-100 p-1.5 rounded font-mono">
+                        Error: {item.error}
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
-                      <span>Jadwal: {new Date(item.scheduledAt).toLocaleString('id-ID')}</span>
+                      <span>Jadwal: {new Date(item.scheduledAt).toLocaleString('id-ID')} ({userTimeZone})</span>
                       <span>Dibuat: {new Date(item.createdAt).toLocaleDateString('id-ID')}</span>
                     </div>
                   </div>

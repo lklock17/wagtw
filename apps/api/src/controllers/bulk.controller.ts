@@ -1,8 +1,9 @@
 import { Request, Response } from 'express';
 import { prisma } from '@wagtw/database';
 import axios from 'axios';
+import { normalizePhoneNumber } from '../utils/phone';
 
-const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4001';
+const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4011';
 
 export const createBulkJob = async (req: Request, res: Response) => {
   const { name, deviceId, contacts, body, delay } = req.body;
@@ -17,7 +18,7 @@ export const createBulkJob = async (req: Request, res: Response) => {
         status: 'PENDING',
         messages: {
           create: contacts.map((to: string) => ({
-            to,
+            to: normalizePhoneNumber(to),
             body,
             status: 'PENDING'
           }))

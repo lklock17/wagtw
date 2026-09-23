@@ -9,6 +9,7 @@ import axios from 'axios';
 import { prisma } from '@wagtw/database';
 import routes from './routes';
 import { warmupService } from './services/warmup.service';
+import { normalizePhoneNumber } from './utils/phone';
 
 dotenv.config();
 
@@ -65,9 +66,10 @@ cron.schedule('* * * * *', async () => {
 
   for (const msg of dueMessages) {
     try {
+      const normalizedTo = normalizePhoneNumber(msg.to);
       await axios.post(`${WORKER_URL}/messages/send`, {
         deviceId: msg.deviceId,
-        to: msg.to,
+        to: normalizedTo,
         text: msg.body
       });
 
@@ -75,11 +77,11 @@ cron.schedule('* * * * *', async () => {
         where: { id: msg.id },
         data: { status: 'SENT' }
       });
-      console.log(`✅ Scheduled message sent to ${msg.to}`);
+      console.log(`✅ Scheduled message sent to ${normalizedTo}`);
     } catch (error: any) {
       await prisma.scheduledMessage.update({
         where: { id: msg.id },
-        data: { status: 'FAILED', error: error.message }
+        data: { status: 'FAILED', error: error.response?.data?.error || error.message }
       });
       console.error(`❌ Failed to send scheduled message: ${error.message}`);
     }

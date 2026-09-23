@@ -44,6 +44,7 @@ export const clientService = {
 export const autoReplyService = {
   getRules: () => api.get('/autoreply'),
   createRule: (data: any) => api.post('/autoreply', data),
+  updateRule: (id: string, data: any) => api.patch(`/autoreply/${id}`, data),
   deleteRule: (id: string) => api.delete(`/autoreply/${id}`),
 };
 
