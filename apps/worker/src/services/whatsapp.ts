@@ -303,8 +303,18 @@ class WhatsAppManager {
         console.warn(`Could not save CONNECTED status in DB:`, e.message);
       }
 
-    } catch (error) {
-      console.error(`Error creating session ${sessionName}:`, error);
+    } catch (error: any) {
+      console.error(`Error creating session ${sessionName}:`, error?.message || error);
+      const errMsg = error?.message || String(error);
+      if (errMsg.includes('TimeoutError') || errMsg.includes('Waiting failed') || errMsg.includes('waitForFunction failed')) {
+        console.warn(`[createSession] Corrupted session token detected for ${deviceId} (${sessionName}). Removing damaged token folder so QR can generate immediately...`);
+        try {
+          const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
+          if (fs.existsSync(tokenDir)) {
+            fs.rmSync(tokenDir, { recursive: true, force: true });
+          }
+        } catch {}
+      }
       this.updateDeviceStatus(deviceId, 'DISCONNECTED');
     } finally {
       this.inProgressSessions.delete(deviceId);
