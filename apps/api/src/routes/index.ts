@@ -9,6 +9,8 @@ import authRoutes from './auth.routes';
 import bulkRoutes from './bulk.routes';
 import mediaRoutes from './media.routes';
 import scheduleRoutes from './schedule.routes';
+import statsRoutes from './stats.routes';
+import warmupRoutes from './warmup.routes';
 import { authMiddleware } from '../middlewares/auth.middleware';
 
 const router = Router();
@@ -16,6 +18,7 @@ const router = Router();
 router.use('/auth', authRoutes);
 
 // Protected Routes
+router.use('/stats', authMiddleware, statsRoutes);
 router.use('/devices', authMiddleware, deviceRoutes);
 router.use('/messages', authMiddleware, messageRoutes);
 router.use('/inbox', authMiddleware, inboxRoutes);
@@ -25,5 +28,6 @@ router.use('/autoreply', authMiddleware, autoReplyRoutes);
 router.use('/bulk', authMiddleware, bulkRoutes);
 router.use('/media', authMiddleware, mediaRoutes);
 router.use('/schedules', authMiddleware, scheduleRoutes);
+router.use('/warmup', authMiddleware, warmupRoutes);
 
 export default router;

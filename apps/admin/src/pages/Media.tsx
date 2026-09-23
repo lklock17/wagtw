@@ -1,10 +1,20 @@
-import { useState, useEffect } from 'react';
-import { Image as ImageIcon, Video, FileText, Upload, Trash2, Copy, Check, Search, Filter, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { 
+  Image as ImageIcon, 
+  Video, 
+  FileText, 
+  Upload, 
+  Trash2, 
+  Copy, 
+  Check, 
+  Search, 
+  RotateCw,
+  FolderOpen
+} from 'lucide-react';
 import { mediaService } from '../services/api';
-import { clsx } from 'clsx';
 
 export default function Media() {
-  const [media, setMedia] = useState([]);
+  const [media, setMedia] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -16,8 +26,9 @@ export default function Media() {
 
   const fetchMedia = async () => {
     try {
+      setLoading(true);
       const res = await mediaService.getMedia();
-      setMedia(res.data);
+      setMedia(res.data || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -37,19 +48,19 @@ export default function Media() {
       await mediaService.uploadMedia(formData);
       fetchMedia();
     } catch (err) {
-      alert('Upload failed');
+      alert('Gagal mengunggah media');
     } finally {
       setUploading(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this file?')) return;
+    if (!confirm('Hapus berkas media ini?')) return;
     try {
       await mediaService.deleteMedia(id);
       fetchMedia();
     } catch (err) {
-      alert('Delete failed');
+      alert('Gagal menghapus berkas');
     }
   };
 
@@ -60,113 +71,122 @@ export default function Media() {
   };
 
   const filteredMedia = media.filter((m: any) => 
-    m.name.toLowerCase().includes(searchTerm.toLowerCase())
+    m.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
-    <div className="space-y-10 pb-20">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+    <div className="space-y-5 max-w-6xl mx-auto pb-12">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-2 border-b border-slate-200">
         <div>
-          <h1 className="text-4xl font-bold text-slate-900 tracking-tight">Media Library</h1>
-          <p className="text-slate-500 mt-2 text-lg">Central storage for your images, videos, and documents.</p>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Media Storage & Library</h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Penyimpanan gambar dan dokumen untuk dikirimkan melalui pesan WhatsApp broadcast atau API.
+          </p>
         </div>
-        
-        <label className="flex items-center gap-2 px-8 py-4 bg-primary hover:bg-secondary text-white rounded-2xl font-bold shadow-lg shadow-primary/30 transition-all cursor-pointer group">
-          {uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5 group-hover:-translate-y-1 transition-transform" />}
-          <span>Upload New Media</span>
+
+        <label className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shadow-xs transition-all cursor-pointer">
+          {uploading ? <RotateCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+          <span>{uploading ? 'Mengunggah...' : 'Unggah Media Baru'}</span>
           <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
         </label>
       </div>
 
-      {/* Search & Filter */}
-      <div className="flex flex-col md:flex-row gap-4 items-center bg-white p-4 rounded-[2rem] shadow-sm border border-slate-100">
-        <div className="relative flex-1 w-full">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+      {/* Compact Search Bar */}
+      <div className="flex items-center gap-3 bg-white p-2 rounded-xl border border-slate-200 shadow-xs">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
           <input 
             type="text" 
-            placeholder="Search media by name..."
+            placeholder="Cari media berdasarkan nama..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 bg-slate-50 border-none rounded-xl text-sm focus:ring-2 focus:ring-primary/20 transition-all outline-none"
+            className="w-full pl-9 pr-3 py-1.5 text-xs bg-transparent focus:outline-none text-slate-800"
           />
         </div>
-        <div className="flex gap-2 w-full md:w-auto">
-           <button className="flex-1 md:flex-none px-6 py-3 bg-slate-50 text-slate-600 rounded-xl text-sm font-bold flex items-center justify-center gap-2 hover:bg-slate-100 transition-all">
-             <Filter className="w-4 h-4" />
-             All Types
-           </button>
-        </div>
+        <span className="text-[11px] text-slate-400 font-medium px-2">
+          {filteredMedia.length} berkas
+        </span>
       </div>
 
-      {loading ? (
-        <div className="flex flex-col items-center justify-center py-40 space-y-4">
-          <Loader2 className="w-12 h-12 text-primary animate-spin" />
-          <p className="text-slate-400 font-medium tracking-wide">Loading your library...</p>
+      {/* Media Grid */}
+      {loading && media.length === 0 ? (
+        <div className="bg-white rounded-xl p-8 border border-slate-200 text-center text-xs text-slate-500">
+          Memuat daftar media...
+        </div>
+      ) : filteredMedia.length === 0 ? (
+        <div className="bg-white rounded-xl border border-slate-200 p-8 text-center flex flex-col items-center shadow-xs">
+          <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center mb-3">
+            <FolderOpen className="w-5 h-5" />
+          </div>
+          <h3 className="text-sm font-bold text-slate-800">Media Library Kosong</h3>
+          <p className="text-slate-500 text-xs mt-1 mb-4 max-w-md">
+            Belum ada berkas media yang diunggah. Unggah gambar produk atau brosur untuk mulai kirim pesan media.
+          </p>
+          <label className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs transition-all flex items-center gap-1.5 shadow-xs cursor-pointer">
+            <Upload className="w-3.5 h-3.5" />
+            <span>Unggah Sekarang</span>
+            <input type="file" className="hidden" onChange={handleUpload} disabled={uploading} />
+          </label>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-          {filteredMedia.map((item: any) => (
-            <div key={item.id} className="group bg-white rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-xl hover:shadow-slate-100 transition-all overflow-hidden flex flex-col">
-              <div className="aspect-square bg-slate-50 relative overflow-hidden flex items-center justify-center border-b border-slate-50">
-                {item.type === 'IMAGE' ? (
-                  <img src={item.url} alt={item.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
-                ) : item.type === 'VIDEO' ? (
-                  <Video className="w-16 h-16 text-slate-200" />
-                ) : (
-                  <FileText className="w-16 h-16 text-slate-200" />
-                )}
-                
-                {/* Hover Overlay */}
-                <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3 backdrop-blur-[2px]">
-                   <button 
-                    onClick={() => copyToClipboard(item.url, item.id)}
-                    className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-slate-900 hover:bg-primary hover:text-white transition-all shadow-xl"
-                    title="Copy URL"
-                   >
-                     {copiedId === item.id ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
-                   </button>
-                   <button 
-                    onClick={() => handleDelete(item.id)}
-                    className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-rose-500 hover:bg-rose-500 hover:text-white transition-all shadow-xl"
-                    title="Delete"
-                   >
-                     <Trash2 className="w-5 h-5" />
-                   </button>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
+          {filteredMedia.map((item: any) => {
+            const isImg = item.mimeType?.startsWith('image') || item.type === 'IMAGE';
+            const isVid = item.mimeType?.startsWith('video') || item.type === 'VIDEO';
+
+            return (
+              <div 
+                key={item.id} 
+                className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs hover:border-slate-300 transition-colors flex flex-col justify-between group"
+              >
+                <div className="h-28 bg-slate-100 relative overflow-hidden flex items-center justify-center">
+                  {isImg ? (
+                    <img 
+                      src={item.url} 
+                      alt={item.name} 
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" 
+                    />
+                  ) : isVid ? (
+                    <Video className="w-8 h-8 text-indigo-500" />
+                  ) : (
+                    <FileText className="w-8 h-8 text-slate-400" />
+                  )}
+                  <span className="absolute top-1.5 right-1.5 px-1.5 py-0.2 rounded bg-black/60 backdrop-blur-xs text-[9px] font-bold text-white font-mono uppercase">
+                    {item.type || 'FILE'}
+                  </span>
                 </div>
 
-                <div className="absolute top-4 left-4">
-                  <div className={clsx(
-                    "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-sm",
-                    item.type === 'IMAGE' ? "bg-emerald-500 text-white" : 
-                    item.type === 'VIDEO' ? "bg-amber-500 text-white" : "bg-primary text-white"
-                  )}>
-                    {item.type}
+                <div className="p-2.5 space-y-1.5">
+                  <p className="text-xs font-bold text-slate-800 truncate" title={item.name}>
+                    {item.name}
+                  </p>
+                  <p className="text-[10px] text-slate-400 font-mono">
+                    {(item.size / 1024).toFixed(1)} KB
+                  </p>
+
+                  <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between">
+                    <button
+                      onClick={() => copyToClipboard(item.url, item.id)}
+                      className="text-[10px] font-semibold text-slate-600 hover:text-emerald-700 flex items-center gap-1 cursor-pointer"
+                      title="Salin URL Publik"
+                    >
+                      {copiedId === item.id ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedId === item.id ? 'Tersalin' : 'Salin URL'}</span>
+                    </button>
+
+                    <button 
+                      onClick={() => handleDelete(item.id)}
+                      className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                      title="Hapus"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
                   </div>
                 </div>
               </div>
-
-              <div className="p-6">
-                <p className="font-bold text-slate-900 truncate mb-1" title={item.name}>{item.name}</p>
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                    {(item.size / 1024 / 1024).toFixed(2)} MB
-                  </p>
-                  <p className="text-[10px] font-medium text-slate-300">
-                    {new Date(item.createdAt).toLocaleDateString()}
-                  </p>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {!loading && filteredMedia.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-40 space-y-6">
-           <div className="w-24 h-24 bg-slate-50 rounded-[2.5rem] flex items-center justify-center">
-             <ImageIcon className="w-10 h-10 text-slate-200" />
-           </div>
-           <p className="text-slate-400 font-medium">Your library is empty. Start uploading!</p>
+            );
+          })}
         </div>
       )}
     </div>

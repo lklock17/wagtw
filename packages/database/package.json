@@ -1,7 +1,8 @@
 {
   "name": "@wagtw/database",
   "version": "1.0.0",
-  "main": "index.ts",
+  "main": "index.js",
+  "types": "index.ts",
   "dependencies": {
     "@prisma/client": "^5.0.0"
   },

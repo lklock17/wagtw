@@ -59,6 +59,8 @@ model Device {
   threads       InboxThread[]
   bulkJobs      BulkJob[]
   scheduledMessages ScheduledMessage[]
+  warmupSentLogs    WarmupLog[]        @relation("WarmupFrom")
+  warmupReceivedLogs WarmupLog[]       @relation("WarmupTo")
 }
 
 model BulkJob {
@@ -184,4 +186,32 @@ model ScheduledMessage {
   error       String?
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
+}
+
+model WarmupConfig {
+  id               String   @id @default("default")
+  isEnabled        Boolean  @default(false)
+  dailyTarget      Int      @default(10) // target chats per day
+  minDelayMinutes  Int      @default(2)  // minimum delay in minutes
+  aiBaseUrl        String   @default("http://103.89.2.102:20128/v1")
+  aiApiKey         String   @default("sk-abf54a1d39290d81-l74lwh-ac3e8eda")
+  aiModel          String   @default("mistral/mistral-large-latest")
+  topicPrompt      String?  @db.Text
+  deviceIds        String[] @default([])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model WarmupLog {
+  id           String   @id @default(cuid())
+  fromDeviceId String
+  fromDevice   Device   @relation("WarmupFrom", fields: [fromDeviceId], references: [id], onDelete: Cascade)
+  toDeviceId   String
+  toDevice     Device   @relation("WarmupTo", fields: [toDeviceId], references: [id], onDelete: Cascade)
+  fromNumber   String?
+  toNumber     String?
+  message      String   @db.Text
+  status       String   @default("SENT") // SENT, FAILED
+  error        String?
+  createdAt    DateTime @default(now())
 }

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 const api = axios.create({
   baseURL: API_URL,
@@ -71,4 +71,17 @@ export const messageService = {
   sendMessage: (data: any) => api.post('/messages/send', data),
 };
 
+export const statsService = {
+  getStats: () => api.get('/stats'),
+};
+
+export const warmupService = {
+  getConfig: () => api.get('/warmup/config'),
+  updateConfig: (data: any) => api.post('/warmup/config', data),
+  fetchModels: (baseUrl?: string, apiKey?: string) => api.post('/warmup/fetch-models', { baseUrl, apiKey }),
+  getLogs: (limit = 50) => api.get(`/warmup/logs?limit=${limit}`),
+  triggerManual: () => api.post('/warmup/trigger'),
+};
+
 export default api;
+

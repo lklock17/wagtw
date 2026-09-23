@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '@wagtw/database';
 import axios from 'axios';
 
-const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4001';
+const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4011';
 
 export const getDevices = async (req: Request, res: Response) => {
   const devices = await prisma.device.findMany({
@@ -22,17 +22,37 @@ export const createDevice = async (req: Request, res: Response) => {
 export const connectDevice = async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
-    await axios.post(`${WORKER_URL}/sessions/init`, { deviceId: id });
+    const device = await prisma.device.findUnique({ where: { id } });
+    if (!device) return res.status(404).json({ error: 'Device not found' });
+    
+    await axios.post(`${WORKER_URL}/sessions/${id}`, { name: device.name, deviceId: id });
     res.json({ message: 'Connection started' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to connect to worker' });
+  } catch (error: any) {
+    console.error(`Failed to connect device ${id}:`, error.message);
+    res.status(500).json({ error: error.response?.data?.error || 'Failed to connect to worker' });
   }
 };
 
 export const deleteDevice = async (req: Request, res: Response) => {
   const { id } = req.params;
-  await prisma.device.delete({ where: { id } });
-  res.json({ success: true });
+  try {
+    try {
+      await axios.delete(`${WORKER_URL}/sessions/${id}`, { timeout: 5000 });
+    } catch (workerErr) {
+      // Worker session may not exist or worker offline, proceed with db cleanup
+    }
+
+    await prisma.inboxMessage.deleteMany({ where: { deviceId: id } });
+    await prisma.inboxThread.deleteMany({ where: { deviceId: id } });
+    await prisma.messageLog.deleteMany({ where: { deviceId: id } });
+    await prisma.scheduledMessage.deleteMany({ where: { deviceId: id } });
+    await prisma.bulkMessage.deleteMany({ where: { job: { deviceId: id } } });
+    await prisma.bulkJob.deleteMany({ where: { deviceId: id } });
+    await prisma.device.delete({ where: { id } });
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 };
 
 // Webhook Logic

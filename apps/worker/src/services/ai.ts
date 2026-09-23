@@ -15,7 +15,8 @@ class AIService {
     if (!this.genAI) return null;
 
     try {
-      const model = this.genAI.getGenerativeModel({ model: "gemini-pro" });
+      const modelName = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+      const model = this.genAI.getGenerativeModel({ model: modelName });
       
       // Basic AI logic with system prompt
       const systemPrompt = "Anda adalah asisten WhatsApp otomatis yang sopan dan membantu. Berikan jawaban singkat dan padat.";

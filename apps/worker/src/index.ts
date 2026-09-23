@@ -1,27 +1,54 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import { waManager } from './services/whatsapp';
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 4001;
+const PORT = process.env.WORKER_PORT || 4011;
 
 app.use(express.json());
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'Worker is running' });
+app.get('/health', (req: Request, res: Response) => {
+  res.json({ status: 'Worker is running', port: PORT });
 });
 
-// Endpoint for API to trigger session creation
-app.post('/sessions/:id', async (req, res) => {
-  const { id } = req.params;
-  const { name } = req.body;
-  
+// Endpoint for API to trigger session creation (supports /sessions/:id and /sessions/init)
+const handleSessionCreate = async (req: Request, res: Response) => {
+  const id = (req.params.id || req.body.deviceId) as string;
+  const name = (req.body.name || req.body.sessionName || id) as string;
+
+  if (!id) {
+    return res.status(400).json({ error: 'deviceId is required' });
+  }
+
   // Non-blocking
   waManager.createSession(id, name);
-  
-  res.json({ message: 'Session initialization started' });
+  res.json({ message: 'Session initialization started', deviceId: id });
+};
+
+app.post('/sessions/:id', handleSessionCreate);
+app.post('/sessions/init', handleSessionCreate);
+
+// Endpoint to logout and remove session
+app.delete('/sessions/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    await waManager.logout(id);
+    res.json({ success: true, message: 'Session closed' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/sessions/:id/logout', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    await waManager.logout(id);
+    res.json({ success: true, message: 'Session closed' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Endpoint for sending messages

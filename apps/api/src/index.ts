@@ -8,24 +8,33 @@ import cron from 'node-cron';
 import axios from 'axios';
 import { prisma } from '@wagtw/database';
 import routes from './routes';
+import { warmupService } from './services/warmup.service';
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.API_PORT || process.env.PORT || 4010;
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
 
-const corsOptions = {
-  origin: ['https://lklock17.github.io', 'http://localhost:5173'],
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
+  : ['http://localhost:5174', 'http://localhost:5173', 'http://127.0.0.1:5174', 'http://127.0.0.1:5173', 'https://lklock17.github.io'];
+
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(null, true); // Permissive in dev to avoid client blocks
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
   credentials: true,
-  optionsSuccessStatus: 200 // Some legacy browsers (IE11, various SmartTVs) choke on 204
+  optionsSuccessStatus: 200
 };
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // Enable pre-flight for all routes
 
 app.use(express.json());
 
@@ -52,7 +61,7 @@ cron.schedule('* * * * *', async () => {
     }
   });
 
-  const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4001';
+  const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4011';
 
   for (const msg of dueMessages) {
     try {
@@ -74,6 +83,13 @@ cron.schedule('* * * * *', async () => {
       });
       console.error(`❌ Failed to send scheduled message: ${error.message}`);
     }
+  }
+
+  // Warmup Service Tick
+  try {
+    await warmupService.cronTick();
+  } catch (err: any) {
+    console.error('Warmup cron error:', err.message);
   }
 });
 
