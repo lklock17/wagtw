@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
+import dns from 'dns';
 import path from 'path';
 import fs from 'fs';
 import cron from 'node-cron';
@@ -12,6 +13,10 @@ import { warmupService } from './services/warmup.service';
 import { normalizePhoneNumber } from './utils/phone';
 
 dotenv.config();
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch (e) {}
 
 const app = express();
 const PORT = process.env.API_PORT || process.env.PORT || 4010;

@@ -564,8 +564,19 @@ export default function Devices() {
                   ) : (
                     <div className="py-16 flex flex-col items-center justify-center gap-3">
                       <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
-                      <p className="text-sm font-bold text-slate-800">Sedang menyiapkan QR Code...</p>
-                      <p className="text-xs text-slate-400">Chromium sedang memuat WhatsApp Web di server.</p>
+                      {qrModalDevice.phoneNumber ? (
+                        <>
+                          <p className="text-sm font-bold text-slate-800">Sedang Memulihkan Sesi WhatsApp...</p>
+                          <p className="text-xs text-slate-500 max-w-xs text-center">
+                            Perangkat ini (+{qrModalDevice.phoneNumber}) sedang menyambung ulang otomatis. Jika sesi di HP dicabut, QR code baru akan otomatis tampil.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-sm font-bold text-slate-800">Sedang Menyiapkan QR Code...</p>
+                          <p className="text-xs text-slate-400">Chromium sedang memuat WhatsApp Web di server.</p>
+                        </>
+                      )}
                     </div>
                   )
                 ) : (

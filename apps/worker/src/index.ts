@@ -1,9 +1,14 @@
 import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
+import dns from 'dns';
 import { waManager } from './services/whatsapp';
 import { formatToWhatsAppJid } from './utils/phone';
 
 dotenv.config();
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch (e) {}
 
 const app = express();
 const PORT = process.env.WORKER_PORT || 4011;

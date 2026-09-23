@@ -13,22 +13,21 @@ class WhatsAppManager {
   private reconnectTimers: Map<string, NodeJS.Timeout> = new Map();
   private inProgressSessions: Set<string> = new Set();
   private loggedOutNotified: Set<string> = new Set();
+  private lastAttemptTime: Map<string, number> = new Map();
   private isWatcherRunning: boolean = false;
 
   async init() {
     // 1. Start continuous auto-recovery background watcher
     this.startAutoRecoveryWatcher();
 
-    // 2. Restore sessions on worker boot for all registered devices with existing tokens sequentially
+    // 2. Restore sessions on worker boot for all paired devices with existing tokens sequentially
     const devices = await prisma.device.findMany();
     for (const device of devices) {
-      const safeSession = `dev_${device.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-      const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
-      if (fs.existsSync(tokenDir) || device.phoneNumber || device.status !== 'DISCONNECTED') {
-        console.log(`[Worker Init] Auto-restoring session for device: ${device.name} (${device.id})`);
+      if (device.phoneNumber) {
+        console.log(`[Worker Init] Auto-restoring session for paired device: ${device.name} (${device.id})`);
         this.createSession(device.id, device.name, true);
-        // Wait 7 seconds between launches so browsers don't compete for memory and CPU
-        await new Promise((r) => setTimeout(r, 7000));
+        // Wait 8 seconds between launches so browsers don't compete for memory and CPU
+        await new Promise((r) => setTimeout(r, 8000));
       }
     }
   }
@@ -37,14 +36,14 @@ class WhatsAppManager {
     if (this.isWatcherRunning) return;
     this.isWatcherRunning = true;
 
-    // Run health check and auto-recovery every 25 seconds
+    // Run health check and auto-recovery every 35 seconds
     setInterval(async () => {
       try {
         await this.checkAndRecoverDevices();
       } catch (err: any) {
         console.warn('[AutoRecoveryWatcher] Error during check:', err.message);
       }
-    }, 25000);
+    }, 35000);
   }
 
   private async checkAndRecoverDevices() {
@@ -72,12 +71,16 @@ class WhatsAppManager {
         }
       } else {
         // No client instance currently active in memory
-        // If device has a token folder or has a known phoneNumber, and is NOT in QR_READY waiting for user scan
-        const safeSession = `dev_${device.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-        const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
+        const lastAttempt = this.lastAttemptTime.get(device.id) || 0;
+        if (Date.now() - lastAttempt < 90000) {
+          // At least 90s cooldown before retrying this device to keep server responsive
+          continue;
+        }
 
-        if ((fs.existsSync(tokenDir) || device.phoneNumber) && device.status !== 'QR_READY') {
+        // Only auto-recover paired devices (device.phoneNumber exists) that are not currently in QR_READY
+        if (device.phoneNumber && device.status !== 'QR_READY') {
           console.log(`[AutoRecoveryWatcher] Found disconnected paired device: ${device.name} (${device.id}). Initiating auto-connect...`);
+          this.lastAttemptTime.set(device.id, Date.now());
           this.reconnectingDevices.add(device.id);
           this.createSession(device.id, device.name, true);
           // Only start 1 browser session per cycle to keep server smooth
@@ -92,7 +95,29 @@ class WhatsAppManager {
       console.log(`[createSession] Session creation already in progress for ${deviceId}, skipping duplicate.`);
       return;
     }
+
+    // Clean up any old or dead client for this device first
+    const existingClient = this.sessions.get(deviceId);
+    if (existingClient) {
+      let isConn = false;
+      try {
+        isConn = await existingClient.isConnected();
+      } catch {
+        isConn = false;
+      }
+      if (isConn) {
+        console.log(`[createSession] Client for ${deviceId} is already connected.`);
+        await this.updateDeviceStatus(deviceId, 'CONNECTED', null);
+        return;
+      }
+      try {
+        await existingClient.close();
+      } catch {}
+      this.sessions.delete(deviceId);
+    }
+
     this.inProgressSessions.add(deviceId);
+    this.lastAttemptTime.set(deviceId, Date.now());
 
     const safeSession = `dev_${deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
@@ -122,7 +147,7 @@ class WhatsAppManager {
                 this.loggedOutNotified.add(deviceId);
                 this.reconnectingDevices.delete(deviceId);
                 console.warn(`[Auto-Recovery] Device ${deviceId} (${sessionName}) requires QR scan: TRUE LOGOUT detected!`);
-                this.sendAlert(deviceId, sessionName, 'LOGOUT', dev?.phoneNumber, 'Sesi telah dicabut dari WhatsApp ponsel.');
+                this.sendAlert(deviceId, sessionName, 'LOGOUT', dev?.phoneNumber, 'Sesi telah dicabut dari WhatsApp ponsel.').catch(() => {});
               }
             }).catch(() => {});
           }
@@ -139,7 +164,7 @@ class WhatsAppManager {
             this.reconnectingDevices.delete(deviceId);
             this.updateDeviceStatus(deviceId, 'CONNECTED', null);
             if (isRecon) {
-              this.sendAlert(deviceId, sessionName, 'RECONNECTED');
+              this.sendAlert(deviceId, sessionName, 'RECONNECTED').catch(() => {});
             }
           } else if (statusSession === 'notLogged') {
             // Sesi BENAR-BENAR LOGOUT dari HP!
@@ -148,7 +173,7 @@ class WhatsAppManager {
               this.loggedOutNotified.add(deviceId);
               this.reconnectingDevices.delete(deviceId);
               this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
-              this.sendAlert(deviceId, sessionName, 'LOGOUT');
+              this.sendAlert(deviceId, sessionName, 'LOGOUT').catch(() => {});
             }
           } else if (
             statusSession === 'desconnectedMobile' || 
@@ -160,9 +185,8 @@ class WhatsAppManager {
             this.handleTemporaryDisconnect(deviceId, sessionName, statusSession);
           }
         },
-        autoClose: 0,
-        deviceSyncTimeout: 0,
-        whatsappVersion: '',
+        autoClose: 180000,
+        deviceSyncTimeout: 120000,
         headless: true,
         devtools: false,
         useChrome: false,
@@ -170,8 +194,8 @@ class WhatsAppManager {
         logQR: false,
         puppeteerOptions: {
           defaultViewport: {
-            width: 1920,
-            height: 1080,
+            width: 1024,
+            height: 768,
             deviceScaleFactor: 1,
             isMobile: false,
             hasTouch: false,
@@ -185,7 +209,10 @@ class WhatsAppManager {
           '--disable-gpu',
           '--no-first-run',
           '--no-zygote',
-          '--window-size=1920,1080',
+          '--window-size=1024,768',
+          '--disable-extensions',
+          '--disable-default-apps',
+          '--disable-sync',
           '--lang=id-ID,id,en-US,en',
           '--disable-blink-features=AutomationControlled'
         ],

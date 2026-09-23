@@ -53,12 +53,29 @@ export class TelegramService {
 
   async sendRawMessage(botToken: string, chatId: string, text: string) {
     const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
-    const res = await axios.post(url, {
-      chat_id: chatId,
-      text,
-      parse_mode: 'HTML'
-    }, { timeout: 10000 });
-    return res.data;
+    try {
+      const res = await axios.post(url, {
+        chat_id: chatId,
+        text,
+        parse_mode: 'HTML'
+      }, { timeout: 6000 });
+      return res.data;
+    } catch (err: any) {
+      const migrateTo = err.response?.data?.parameters?.migrate_to_chat_id;
+      if (migrateTo) {
+        const newChatId = String(migrateTo);
+        const retryRes = await axios.post(url, {
+          chat_id: newChatId,
+          text,
+          parse_mode: 'HTML'
+        }, { timeout: 6000 });
+        await prisma.telegramConfig.updateMany({
+          data: { chatId: newChatId }
+        });
+        return { ...retryRes.data, migrated_to_chat_id: newChatId };
+      }
+      throw err;
+    }
   }
 
   async notify(type: 'CONNECTED' | 'DISCONNECTED' | 'LOGOUT' | 'RECONNECTED', payload: {

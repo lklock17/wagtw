@@ -17,7 +17,7 @@ export class TelegramNotifier {
     reason?: string;
   }) {
     try {
-      const config = await prisma.telegramConfig.findFirst();
+      const config = await (prisma as any).telegramConfig?.findFirst();
       if (!config || !config.isEnabled || !config.botToken || !config.chatId) {
         return;
       }
@@ -67,15 +67,32 @@ export class TelegramNotifier {
                `🕒 <b>Waktu:</b> ${dateStr}`;
       }
 
-      await axios.post(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
-        chat_id: config.chatId,
-        text,
-        parse_mode: 'HTML'
-      }, { timeout: 8000 });
-
-      console.log(`[Telegram Alert Sent] Type: ${type} for ${payload.deviceName}`);
-    } catch (err: any) {
-      console.warn(`[Telegram Alert Failed]:`, err.response?.data?.description || err.message);
+      try {
+        await axios.post(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+          chat_id: config.chatId,
+          text,
+          parse_mode: 'HTML'
+        }, { timeout: 4000 });
+        console.log(`[Telegram Alert Sent] Type: ${type} for ${payload.deviceName}`);
+      } catch (err: any) {
+        const migrateTo = err.response?.data?.parameters?.migrate_to_chat_id;
+        if (migrateTo) {
+          const newChatId = String(migrateTo);
+          console.log(`[Telegram Auto-Migration] Chat ID upgraded to supergroup: ${newChatId}`);
+          await (prisma as any).telegramConfig?.updateMany({
+            data: { chatId: newChatId }
+          });
+          await axios.post(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+            chat_id: newChatId,
+            text,
+            parse_mode: 'HTML'
+          }, { timeout: 4000 }).catch(() => {});
+        } else {
+          console.warn(`[Telegram Alert Failed]:`, err.response?.data?.description || err.message);
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[Telegram Global Error]:`, e.message);
     }
   }
 }
