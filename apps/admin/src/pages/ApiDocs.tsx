@@ -63,7 +63,8 @@ const ENDPOINTS: EndpointDef[] = [
       to: "081234567890",
       text: "Halo! Pesan ini dikirim otomatis via REST API WAGTW.",
       deviceId: "rotate",
-      failover: true
+      failover: true,
+      delay: 5
     },
     exampleResponse: {
       success: true,
@@ -83,6 +84,7 @@ const ENDPOINTS: EndpointDef[] = [
       { name: 'text', type: 'string', required: true, description: 'Isi teks pesan (atau gunakan alias "message")' },
       { name: 'deviceId', type: 'string', required: false, description: 'Isi "rotate" atau "auto" untuk round-robin, atau isi ID device tertentu' },
       { name: 'failover', type: 'boolean', required: false, description: 'Default: true. Jika nomor disconnect, otomatis ganti ke nomor sehat lainnya' },
+      { name: 'delay', type: 'number', required: false, description: 'Jeda waktu tunggu sebelum pesan dikirimkan (satuan detik, contoh: 5. Default: 0 / langsung)' },
       { name: 'type', type: 'string', required: false, description: 'Pilihan: TEXT (default), IMAGE, VIDEO, AUDIO, DOCUMENT' },
       { name: 'url', type: 'string', required: false, description: 'URL file media publik jika type bukan TEXT' }
     ]
@@ -590,6 +592,114 @@ const ENDPOINTS: EndpointDef[] = [
       { name: 'currentPassword', type: 'string', required: false, description: 'Password lama saat ini' },
       { name: 'newPassword', type: 'string', required: true, description: 'Password baru (minimal 6 karakter)' }
     ]
+  },
+
+  // 7. Buku Kontak (Contact Management)
+  {
+    id: 'contact-list',
+    category: 'Buku Kontak (Phonebook)',
+    method: 'GET',
+    path: '/api/contacts',
+    summary: 'Ambil Daftar Kontak (Pencarian, Tag, & Pagination)',
+    description: 'Mengambil daftar kontak tersimpan di buku telepon dengan dukungan filter pencarian nama/nomor, filter label tag, sorting, dan pagination.',
+    requiresAuth: true,
+    queryParams: [
+      { name: 'search', type: 'string', required: false, description: 'Pencarian kata kunci nama, nomor telepon, atau catatan' },
+      { name: 'tag', type: 'string', required: false, description: 'Filter berdasarkan tag tertentu (contoh: VIP, Pelanggan)' },
+      { name: 'page', type: 'number', required: false, description: 'Nomor halaman (default: 1)' },
+      { name: 'limit', type: 'number', required: false, description: 'Jumlah data per halaman (default: 20)' }
+    ],
+    exampleResponse: {
+      success: true,
+      data: [
+        {
+          id: "cmuecontact123",
+          name: "Budi Santoso",
+          phone: "6281234567890",
+          email: "budi@example.com",
+          tags: ["VIP", "Customer"],
+          notes: "Pelanggan setia sejak 2024",
+          createdAt: "2026-09-23T10:00:00.000Z"
+        }
+      ],
+      pagination: {
+        page: 1,
+        limit: 20,
+        total: 1,
+        totalPages: 1
+      }
+    }
+  },
+  {
+    id: 'contact-create',
+    category: 'Buku Kontak (Phonebook)',
+    method: 'POST',
+    path: '/api/contacts',
+    summary: 'Tambah Kontak Baru ke Buku Telepon',
+    description: 'Menambahkan satu kontak baru ke database buku telepon. Nomor telepon akan otomatis dinormalisasi ke format standar internasional (62xxx).',
+    requiresAuth: true,
+    defaultPayload: {
+      name: "Budi Santoso",
+      phone: "081234567890",
+      email: "budi@example.com",
+      tags: ["VIP", "Customer"],
+      notes: "Pelanggan setia sejak 2024"
+    },
+    exampleResponse: {
+      success: true,
+      data: {
+        id: "cmuecontact123",
+        name: "Budi Santoso",
+        phone: "6281234567890",
+        email: "budi@example.com",
+        tags: ["VIP", "Customer"],
+        notes: "Pelanggan setia sejak 2024",
+        createdAt: "2026-09-23T10:00:00.000Z"
+      }
+    },
+    bodyParams: [
+      { name: 'name', type: 'string', required: true, description: 'Nama lengkap kontak' },
+      { name: 'phone', type: 'string', required: true, description: 'Nomor WhatsApp / telepon' },
+      { name: 'email', type: 'string', required: false, description: 'Alamat email kontak' },
+      { name: 'tags', type: 'array', required: false, description: 'Array label/kategori (contoh: ["VIP", "Reseller"])' },
+      { name: 'notes', type: 'string', required: false, description: 'Catatan tambahan terkait kontak' }
+    ]
+  },
+  {
+    id: 'contact-tags',
+    category: 'Buku Kontak (Phonebook)',
+    method: 'GET',
+    path: '/api/contacts/tags',
+    summary: 'Ambil Semua Tag / Label Kontak yang Tersedia',
+    description: 'Mengambil daftar seluruh tag/label unik yang pernah digunakan pada kontak buku telepon.',
+    requiresAuth: true,
+    exampleResponse: {
+      success: true,
+      data: ["VIP", "Customer", "Reseller", "Lead"]
+    }
+  },
+  {
+    id: 'contact-export-vcf',
+    category: 'Buku Kontak (Phonebook)',
+    method: 'GET',
+    path: '/api/contacts/export/vcf',
+    summary: 'Export Semua Kontak ke Format vCard (.vcf)',
+    description: 'Mengunduh seluruh daftar kontak dalam format vCard 3.0 standar yang siap diimpor langsung ke HP Android, iPhone (iOS), maupun Google Contacts.',
+    requiresAuth: true,
+    exampleResponse: "File attachment: contacts-export.vcf (vCard 3.0 format)"
+  },
+  {
+    id: 'contact-delete',
+    category: 'Buku Kontak (Phonebook)',
+    method: 'DELETE',
+    path: '/api/contacts/{id}',
+    summary: 'Hapus Kontak dari Buku Telepon',
+    description: 'Menghapus satu data kontak berdasarkan ID.',
+    requiresAuth: true,
+    exampleResponse: {
+      success: true,
+      message: "Kontak berhasil dihapus"
+    }
   }
 ];
 
