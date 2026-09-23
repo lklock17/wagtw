@@ -11,6 +11,7 @@ import mediaRoutes from './media.routes';
 import scheduleRoutes from './schedule.routes';
 import statsRoutes from './stats.routes';
 import warmupRoutes from './warmup.routes';
+import telegramRoutes from './telegram.routes';
 import { authMiddleware } from '../middlewares/auth.middleware';
 
 const router = Router();
@@ -29,5 +30,6 @@ router.use('/bulk', authMiddleware, bulkRoutes);
 router.use('/media', authMiddleware, mediaRoutes);
 router.use('/schedules', authMiddleware, scheduleRoutes);
 router.use('/warmup', authMiddleware, warmupRoutes);
+router.use('/telegram', authMiddleware, telegramRoutes);
 
 export default router;

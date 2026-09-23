@@ -215,3 +215,15 @@ model WarmupLog {
   error        String?
   createdAt    DateTime @default(now())
 }
+
+model TelegramConfig {
+  id               String   @id @default("default")
+  isEnabled        Boolean  @default(false)
+  botToken         String?
+  chatId           String?
+  notifyDisconnect Boolean  @default(true)
+  notifyConnect    Boolean  @default(true)
+  notifyLogout     Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}

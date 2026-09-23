@@ -96,5 +96,11 @@ export const authService = {
   resetUserPassword: (id: string, newPassword: string) => api.patch(`/auth/users/${id}/password`, { newPassword }),
 };
 
+export const telegramService = {
+  getConfig: () => api.get('/telegram/config'),
+  updateConfig: (data: any) => api.post('/telegram/config', data),
+  testTelegram: (botToken: string, chatId: string) => api.post('/telegram/test', { botToken, chatId }),
+};
+
 export default api;
 

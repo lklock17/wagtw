@@ -4,10 +4,13 @@ import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import { aiService } from './ai';
+import { telegramNotifier } from './telegram';
 
 class WhatsAppManager {
   private sessions: Map<string, wppconnect.Whatsapp> = new Map();
   private cooldowns: Map<string, number> = new Map(); // key: deviceId:remoteNumber -> timestamp
+  private reconnectingDevices: Set<string> = new Set();
+  private reconnectTimers: Map<string, NodeJS.Timeout> = new Map();
 
   async init() {
     // Restore sessions for all devices that should be connected
@@ -43,18 +46,31 @@ class WhatsAppManager {
           this.updateDeviceStatus(deviceId, 'QR_READY', base64Qr);
         },
         statusFind: (statusSession: any, session: string) => {
-          console.log(`Status Session: ${statusSession} [${session}]`);
+          console.log(`[StatusFind] Device ${deviceId} (${sessionName}): ${statusSession} [${session}]`);
           if (
             statusSession === 'isLogged' || 
             statusSession === 'qrReadSuccess'
           ) {
+            const isRecon = this.reconnectingDevices.has(deviceId);
+            this.reconnectingDevices.delete(deviceId);
             this.updateDeviceStatus(deviceId, 'CONNECTED', null);
+            if (isRecon) {
+              this.sendAlert(deviceId, sessionName, 'RECONNECTED');
+            }
+          } else if (statusSession === 'notLogged') {
+            // Sesi BENAR-BENAR LOGOUT dari HP!
+            console.warn(`[StatusFind] Device ${deviceId} (${sessionName}) has logged out from mobile!`);
+            this.reconnectingDevices.delete(deviceId);
+            this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
+            this.sendAlert(deviceId, sessionName, 'LOGOUT');
           } else if (
+            statusSession === 'desconnectedMobile' || 
             statusSession === 'browserClose' || 
             statusSession === 'serverClose' ||
             statusSession === 'autocloseCalled'
           ) {
-            this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
+            // Disconnect SEMENTARA / Socket Glitch
+            this.handleTemporaryDisconnect(deviceId, sessionName, statusSession);
           }
         },
         autoClose: 0,
@@ -116,31 +132,29 @@ class WhatsAppManager {
               ]
             });
             // 6. WebGL Vendor & Renderer spoofing (Intel Iris Xe Graphics)
-            const getParameter = WebGLRenderingContext.prototype.getParameter;
-            WebGLRenderingContext.prototype.getParameter = function(parameter) {
-              if (parameter === 37445) return 'Intel Inc.';
-              if (parameter === 37446) return 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0)';
-              return getParameter.apply(this, [parameter]);
+            const getParameterProto = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(param: number) {
+              if (param === 37445) return 'Intel Inc.'; // UNMASKED_VENDOR_WEBGL
+              if (param === 37446) return 'Intel(R) Iris(R) Xe Graphics'; // UNMASKED_RENDERER_WEBGL
+              return getParameterProto.apply(this, [param]);
             };
           });
         }
       } catch (fpErr: any) {
-        console.warn('Could not inject full stealth fingerprint:', fpErr.message);
+        console.warn(`[Stealth Fingerprint Warning] Could not apply evaluateOnNewDocument for ${deviceId}:`, fpErr.message);
       }
 
       this.sessions.set(deviceId, client);
-      this.setupEventListeners(deviceId, client);
-      
-      // Allow WhatsApp Web 2 seconds to finalize DOM and state
-      await new Promise((r) => setTimeout(r, 2000));
+      this.setupEventListeners(deviceId, sessionName, client);
+
+      // Give Puppeteer a brief 2-second synchronization grace period before inspecting device phone number
+      await new Promise((resolve) => setTimeout(resolve, 2000));
 
       let phoneNumber: string | null = null;
       try {
-        const wid = await client.getWid();
-        if (typeof wid === 'string') {
-          phoneNumber = wid.replace(/@.*$/, '');
-        } else if (wid && (wid as any).user) {
-          phoneNumber = (wid as any).user;
+        const rawWid = await client.getWid();
+        if (rawWid) {
+          phoneNumber = rawWid.replace(/[^0-9]/g, '');
         }
       } catch (e) {
         console.warn('Could not get wid directly:', e);
@@ -166,6 +180,10 @@ class WhatsAppManager {
           }
         });
         console.log(`✅ Device ${deviceId} [${sessionName}] CONNECTED! Phone: ${phoneNumber || 'detected'}`);
+
+        const isRecon = this.reconnectingDevices.has(deviceId);
+        this.reconnectingDevices.delete(deviceId);
+        await this.sendAlert(deviceId, sessionName, isRecon ? 'RECONNECTED' : 'CONNECTED', phoneNumber);
       } catch (e: any) {
         console.warn(`Could not save CONNECTED status in DB:`, e.message);
       }
@@ -190,7 +208,98 @@ class WhatsAppManager {
     }
   }
 
-  private setupEventListeners(deviceId: string, client: wppconnect.Whatsapp) {
+  private async sendAlert(
+    deviceId: string, 
+    sessionName: string, 
+    type: 'CONNECTED' | 'DISCONNECTED' | 'LOGOUT' | 'RECONNECTED', 
+    phoneOverride?: string | null, 
+    reason?: string
+  ) {
+    try {
+      let phoneNumber = phoneOverride;
+      if (!phoneNumber) {
+        const dev = await prisma.device.findUnique({ where: { id: deviceId } });
+        phoneNumber = dev?.phoneNumber;
+      }
+      await telegramNotifier.sendAlert(type, {
+        deviceName: sessionName,
+        phoneNumber,
+        reason
+      });
+    } catch (e: any) {
+      console.warn(`[Telegram Alert Error]:`, e.message);
+    }
+  }
+
+  private async handleTemporaryDisconnect(deviceId: string, sessionName: string, reason: string) {
+    if (this.reconnectingDevices.has(deviceId)) {
+      return; // Already attempting auto-reconnect
+    }
+
+    this.reconnectingDevices.add(deviceId);
+    console.log(`[Auto-Reconnect] Device ${deviceId} (${sessionName}) disconnected (${reason}). Attempting auto-recovery in background...`);
+
+    await this.sendAlert(
+      deviceId, 
+      sessionName, 
+      'DISCONNECTED', 
+      null, 
+      `Koneksi terputus sesaat (${reason}). Sistem sedang mencoba Auto-Reconnect...`
+    );
+
+    // Wait 6 seconds, then check connection and reload page without forcing user to scan QR
+    const timer = setTimeout(async () => {
+      try {
+        const client = this.sessions.get(deviceId);
+        if (client) {
+          const isConn = await client.isConnected().catch(() => false);
+          if (isConn) {
+            console.log(`[Auto-Reconnect] Device ${deviceId} recovered automatically!`);
+            this.reconnectingDevices.delete(deviceId);
+            await this.updateDeviceStatus(deviceId, 'CONNECTED', null);
+            await this.sendAlert(deviceId, sessionName, 'RECONNECTED');
+            return;
+          }
+
+          // Try page reload to re-establish WSS connection
+          const page = (client as any).page;
+          if (page && !page.isClosed()) {
+            console.log(`[Auto-Reconnect] Reloading WhatsApp Web page for ${deviceId}...`);
+            await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[Auto-Reconnect] Recovery attempt error for ${deviceId}:`, err.message);
+      }
+    }, 6000);
+
+    this.reconnectTimers.set(deviceId, timer);
+  }
+
+  private setupEventListeners(deviceId: string, sessionName: string, client: wppconnect.Whatsapp) {
+    // 1. Listen to connection state changes
+    client.onStateChange(async (state: any) => {
+      console.log(`[onStateChange] Device ${deviceId} (${sessionName}) -> State: ${state}`);
+
+      if (state === 'CONNECTED') {
+        const isRecon = this.reconnectingDevices.has(deviceId);
+        this.reconnectingDevices.delete(deviceId);
+        await this.updateDeviceStatus(deviceId, 'CONNECTED', null);
+        if (isRecon) {
+          await this.sendAlert(deviceId, sessionName, 'RECONNECTED');
+        }
+      } else if (state === 'UNPAIRED' || state === 'UNLAUNCHED') {
+        // True logout from mobile!
+        this.reconnectingDevices.delete(deviceId);
+        await this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
+        await this.sendAlert(deviceId, sessionName, 'LOGOUT');
+      } else if (state === 'DISCONNECTED' || state === 'TIMEOUT') {
+        // Temporary network drop
+        await this.handleTemporaryDisconnect(deviceId, sessionName, state);
+      }
+    });
+
+    // 2. Listen to incoming messages
     client.onMessage(async (message) => {
       if (message.isGroupMsg) return; // Optional: handle group
 
@@ -224,7 +333,7 @@ class WhatsAppManager {
         data: {
           threadId: thread.id,
           deviceId,
-          fromMe: message.fromMe,
+          fromMe: false,
           body: message.body,
           type: msgType as any,
           metadata: message as any
@@ -260,13 +369,17 @@ class WhatsAppManager {
         const matchedRule = rules.find((r: any) => r.keyword && bodyLower.includes(r.keyword.toLowerCase()));
         
         if (matchedRule) {
-          ruleCooldown = matchedRule.cooldown || 30;
-          responseText = matchedRule.isAi ? await aiService.generateResponse(message.body) : matchedRule.response;
+          ruleCooldown = matchedRule.cooldown;
+          if (matchedRule.isAi) {
+            responseText = await aiService.generateResponse(message.body);
+          } else {
+            responseText = matchedRule.response;
+          }
         } else {
-          // 2. Fallback to AI if enabled
-          const aiFallback = rules.find((r: any) => r.isAi && !r.keyword);
-          if (aiFallback) {
-            ruleCooldown = aiFallback.cooldown || 30;
+          // 2. Fallback to 9routes AI if configured
+          const aiRule = rules.find((r: any) => !r.keyword && r.isAi);
+          if (aiRule) {
+            ruleCooldown = aiRule.cooldown;
             responseText = await aiService.generateResponse(message.body);
           }
         }

@@ -20,12 +20,13 @@ import {
   UserPlus,
   Shield,
   Lock,
-  Loader2
+  Loader2,
+  Bell
 } from 'lucide-react';
-import { autoReplyService, warmupService, authService } from '../services/api';
+import { autoReplyService, warmupService, authService, telegramService } from '../services/api';
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<'autoreply' | 'ai' | 'webhook' | 'system' | 'users'>('autoreply');
+  const [activeTab, setActiveTab] = useState<'autoreply' | 'ai' | 'webhook' | 'system' | 'users' | 'telegram'>('autoreply');
   const [rules, setRules] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [banner, setBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -85,11 +86,83 @@ export default function Settings() {
   const [resetNewPassword, setResetNewPassword] = useState('');
   const [resettingPassword, setResettingPassword] = useState(false);
 
+  // Telegram Notification State
+  const [telegramEnabled, setTelegramEnabled] = useState(false);
+  const [telegramBotToken, setTelegramBotToken] = useState('');
+  const [telegramChatId, setTelegramChatId] = useState('');
+  const [telegramNotifyDisconnect, setTelegramNotifyDisconnect] = useState(true);
+  const [telegramNotifyConnect, setTelegramNotifyConnect] = useState(true);
+  const [telegramNotifyLogout, setTelegramNotifyLogout] = useState(true);
+  const [savingTelegram, setSavingTelegram] = useState(false);
+  const [testingTelegram, setTestingTelegram] = useState(false);
+  const [telegramTestResult, setTelegramTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
   useEffect(() => {
     fetchRules();
     loadAiConfig();
     fetchUsersList();
+    loadTelegramConfig();
   }, []);
+
+  const loadTelegramConfig = async () => {
+    try {
+      const res = await telegramService.getConfig();
+      if (res.data) {
+        setTelegramEnabled(!!res.data.isEnabled);
+        setTelegramBotToken(res.data.botToken || '');
+        setTelegramChatId(res.data.chatId || '');
+        setTelegramNotifyDisconnect(res.data.notifyDisconnect !== false);
+        setTelegramNotifyConnect(res.data.notifyConnect !== false);
+        setTelegramNotifyLogout(res.data.notifyLogout !== false);
+      }
+    } catch (err: any) {
+      console.warn('Could not load telegram config:', err.message);
+    }
+  };
+
+  const handleSaveTelegram = async () => {
+    setSavingTelegram(true);
+    setTelegramTestResult(null);
+    try {
+      await telegramService.updateConfig({
+        isEnabled: telegramEnabled,
+        botToken: telegramBotToken.trim() || null,
+        chatId: telegramChatId.trim() || null,
+        notifyDisconnect: telegramNotifyDisconnect,
+        notifyConnect: telegramNotifyConnect,
+        notifyLogout: telegramNotifyLogout
+      });
+      setBanner({ type: 'success', message: 'Pengaturan Notifikasi Telegram berhasil disimpan!' });
+      setTimeout(() => setBanner(null), 3500);
+    } catch (err: any) {
+      setBanner({ type: 'error', message: 'Gagal menyimpan konfigurasi Telegram: ' + (err.response?.data?.error || err.message) });
+    } finally {
+      setSavingTelegram(false);
+    }
+  };
+
+  const handleTestTelegram = async () => {
+    if (!telegramBotToken.trim() || !telegramChatId.trim()) {
+      setBanner({ type: 'error', message: 'Bot Token dan Chat ID wajib diisi untuk melakukan pengujian.' });
+      return;
+    }
+    setTestingTelegram(true);
+    setTelegramTestResult(null);
+    try {
+      await telegramService.testTelegram(telegramBotToken.trim(), telegramChatId.trim());
+      setTelegramTestResult({
+        success: true,
+        message: 'Pesan uji coba berhasil dikirim! Silakan periksa aplikasi Telegram Anda.'
+      });
+    } catch (err: any) {
+      setTelegramTestResult({
+        success: false,
+        message: err.response?.data?.error || err.message || 'Gagal mengirim pesan uji coba ke Telegram.'
+      });
+    } finally {
+      setTestingTelegram(false);
+    }
+  };
 
   const fetchRules = async () => {
     try {
@@ -463,6 +536,21 @@ export default function Settings() {
         >
           <Users className="w-3.5 h-3.5" />
           <span>Pengguna & Keamanan ({users.length || 1})</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('telegram');
+            loadTelegramConfig();
+          }}
+          className={`px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+            activeTab === 'telegram'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
+          }`}
+        >
+          <Bell className="w-3.5 h-3.5" />
+          <span>Notifikasi Telegram</span>
         </button>
 
         <button
@@ -996,7 +1084,171 @@ export default function Settings() {
         </div>
       )}
 
-      {/* TAB 5: STATUS GATEWAY */}
+      {/* TAB 5: NOTIFIKASI TELEGRAM BOT */}
+      {activeTab === 'telegram' && (
+        <div className="space-y-5">
+          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center">
+                  <Bell className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Notifikasi Otomatis ke Telegram</h3>
+                  <p className="text-xs text-slate-500">
+                    Dapatkan peringatan real-time di Telegram saat nomor WhatsApp terputus, pulih kembali, atau logout.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setTelegramEnabled(!telegramEnabled)}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  telegramEnabled
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                    : 'bg-slate-100 text-slate-500 border-slate-200'
+                }`}
+              >
+                <span className={`w-2 h-2 rounded-full ${telegramEnabled ? 'bg-emerald-500' : 'bg-slate-400'}`}></span>
+                <span>{telegramEnabled ? 'NOTIFIKASI: AKTIF' : 'NOTIFIKASI: NON-AKTIF'}</span>
+              </button>
+            </div>
+
+            {/* Input Form */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Telegram Bot Token *
+                </label>
+                <input
+                  type="password"
+                  value={telegramBotToken}
+                  onChange={(e) => setTelegramBotToken(e.target.value)}
+                  placeholder="Contoh: 7123456789:AAFlmK..."
+                  className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Didapat secara gratis dari <strong>@BotFather</strong> di aplikasi Telegram.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Telegram Chat ID / Group ID *
+                </label>
+                <input
+                  type="text"
+                  value={telegramChatId}
+                  onChange={(e) => setTelegramChatId(e.target.value)}
+                  placeholder="Contoh: 123456789 atau -100123456789"
+                  className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  User ID Anda (dari <strong>@userinfobot</strong>) atau Group ID jika ingin dikirim ke grup tim.
+                </p>
+              </div>
+            </div>
+
+            {/* Notification Filter Checkboxes */}
+            <div className="p-4 bg-slate-50/80 rounded-xl border border-slate-100 space-y-2.5">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Pilih Kejadian yang Akan Mengirim Notifikasi:
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={telegramNotifyDisconnect}
+                    onChange={(e) => setTelegramNotifyDisconnect(e.target.checked)}
+                    className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500"
+                  />
+                  <span>⚠️ Terputus Sesaat (Disconnect)</span>
+                </label>
+
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={telegramNotifyConnect}
+                    onChange={(e) => setTelegramNotifyConnect(e.target.checked)}
+                    className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500"
+                  />
+                  <span>🟢 Online / Pulih (Auto-Reconnected)</span>
+                </label>
+
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={telegramNotifyLogout}
+                    onChange={(e) => setTelegramNotifyLogout(e.target.checked)}
+                    className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500"
+                  />
+                  <span>🔴 Logout dari HP (Butuh Scan Ulang)</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Test Result Box */}
+            {telegramTestResult && (
+              <div
+                className={`p-3.5 rounded-xl text-xs font-semibold flex items-center gap-2 border ${
+                  telegramTestResult.success
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : 'bg-rose-50 text-rose-800 border-rose-200'
+                }`}
+              >
+                {telegramTestResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                )}
+                <span>{telegramTestResult.message}</span>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={handleTestTelegram}
+                disabled={testingTelegram || !telegramBotToken || !telegramChatId}
+                className="w-full sm:w-auto px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {testingTelegram ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                <span>Uji Coba Kirim ke Telegram (Test Ping)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveTelegram}
+                disabled={savingTelegram}
+                className="w-full sm:w-auto px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {savingTelegram ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                <span>Simpan Pengaturan Telegram</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Guide Card */}
+          <div className="bg-sky-50/60 p-5 rounded-xl border border-sky-100 text-xs text-slate-600 space-y-2">
+            <h4 className="font-bold text-sky-900 flex items-center gap-1.5">
+              <Bot className="w-4 h-4 text-sky-600" />
+              <span>Panduan Cepat Membuat Bot Telegram:</span>
+            </h4>
+            <ol className="list-decimal list-inside space-y-1 text-slate-600">
+              <li>Buka aplikasi Telegram dan cari akun <strong>@BotFather</strong>.</li>
+              <li>Kirim perintah <code>/newbot</code>, beri nama bot Anda, lalu BotFather akan memberikan <strong>Bot Token</strong> (contoh: <code>7123456789:AAFlmK...</code>).</li>
+              <li>Cari akun <strong>@userinfobot</strong> di Telegram lalu ketik <code>/start</code> untuk melihat <strong>Chat ID</strong> akun Telegram Anda.</li>
+              <li><strong>PENTING:</strong> Buka bot yang baru Anda buat di Telegram dan klik tombol <strong>START</strong> terlebih dahulu agar bot diizinkan mengirim pesan ke Anda.</li>
+              <li>Masukkan Token dan Chat ID pada form di atas, lalu klik <strong>Uji Coba Kirim ke Telegram</strong>.</li>
+            </ol>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 6: STATUS GATEWAY */}
       {activeTab === 'system' && (
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
