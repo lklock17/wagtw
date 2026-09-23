@@ -1,6 +1,7 @@
 import { Routes, Route, useLocation } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Devices from './pages/Devices';
+import Contacts from './pages/Contacts';
 import Inbox from './pages/Inbox';
 import Templates from './pages/Templates';
 import Clients from './pages/Clients';
@@ -21,6 +22,7 @@ function TopNavbar() {
     switch (location.pathname) {
       case '/': return { title: 'Dashboard', desc: 'Ringkasan operasional dan analitik gateway' };
       case '/devices': return { title: 'Devices WhatsApp', desc: 'Manajemen sesi nomor dan QR code' };
+      case '/contacts': return { title: 'Buku Kontak (Phonebook)', desc: 'Manajemen nomor pelanggan, label segmentasi, dan ekspor vCard' };
       case '/warmup': return { title: 'Warmup Nomor (AI)', desc: 'Pemanasan nomor otomatis 24/7 via 9routes' };
       case '/inbox': return { title: 'Inbox & Live Chat', desc: 'Riwayat percakapan masuk dan keluar' };
       case '/broadcast': return { title: 'Broadcast Massal', desc: 'Kirim kampanye pesan aman dengan delay cerdas' };
@@ -93,6 +95,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/devices" element={<Devices />} />
+            <Route path="/contacts" element={<Contacts />} />
             <Route path="/warmup" element={<Warmup />} />
             <Route path="/inbox" element={<Inbox />} />
             <Route path="/templates" element={<Templates />} />

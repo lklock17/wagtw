@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   Smartphone, 
+  Users,
   Flame, 
   Send, 
   Inbox, 
@@ -25,6 +26,7 @@ const navigation = [
     items: [
       { name: 'Dashboard', path: '/', icon: LayoutDashboard },
       { name: 'Devices WhatsApp', path: '/devices', icon: Smartphone },
+      { name: 'Buku Kontak', path: '/contacts', icon: Users },
       { name: 'Warmup Nomor', path: '/warmup', icon: Flame, badge: 'AI' },
       { name: 'Inbox Chat', path: '/inbox', icon: Inbox },
     ]

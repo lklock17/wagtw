@@ -12,6 +12,7 @@ import scheduleRoutes from './schedule.routes';
 import statsRoutes from './stats.routes';
 import warmupRoutes from './warmup.routes';
 import telegramRoutes from './telegram.routes';
+import contactRoutes from './contact.routes';
 import { authMiddleware } from '../middlewares/auth.middleware';
 
 const router = Router();
@@ -21,6 +22,7 @@ router.use('/auth', authRoutes);
 // Protected Routes
 router.use('/stats', authMiddleware, statsRoutes);
 router.use('/devices', authMiddleware, deviceRoutes);
+router.use('/contacts', authMiddleware, contactRoutes);
 router.use('/messages', authMiddleware, messageRoutes);
 router.use('/inbox', authMiddleware, inboxRoutes);
 router.use('/templates', authMiddleware, templateRoutes);

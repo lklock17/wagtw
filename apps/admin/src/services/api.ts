@@ -102,5 +102,17 @@ export const telegramService = {
   testTelegram: (botToken: string, chatId: string) => api.post('/telegram/test', { botToken, chatId }),
 };
 
+export const contactService = {
+  getContacts: (params?: { search?: string; tag?: string }) => api.get('/contacts', { params }),
+  getTags: () => api.get('/contacts/tags'),
+  createContact: (data: { name: string; phoneNumber: string; email?: string; tags?: string[]; notes?: string }) =>
+    api.post('/contacts', data),
+  updateContact: (id: string, data: { name?: string; phoneNumber?: string; email?: string; tags?: string[]; notes?: string }) =>
+    api.put(`/contacts/${id}`, data),
+  deleteContact: (id: string) => api.delete(`/contacts/${id}`),
+  importContacts: (data: { contacts: any[]; defaultTag?: string }) => api.post('/contacts/import', data),
+  getExportVcfUrl: (tag?: string) => `/api/contacts/export/vcf${tag ? `?tag=${encodeURIComponent(tag)}` : ''}`
+};
+
 export default api;
 
