@@ -11,19 +11,89 @@ class WhatsAppManager {
   private cooldowns: Map<string, number> = new Map(); // key: deviceId:remoteNumber -> timestamp
   private reconnectingDevices: Set<string> = new Set();
   private reconnectTimers: Map<string, NodeJS.Timeout> = new Map();
+  private inProgressSessions: Set<string> = new Set();
+  private loggedOutNotified: Set<string> = new Set();
+  private isWatcherRunning: boolean = false;
 
   async init() {
-    // Restore sessions for all devices that should be connected
-    const devices = await prisma.device.findMany({
-      where: { status: { not: 'DISCONNECTED' } }
-    });
+    // 1. Start continuous auto-recovery background watcher
+    this.startAutoRecoveryWatcher();
 
+    // 2. Restore sessions on worker boot for all registered devices with existing tokens sequentially
+    const devices = await prisma.device.findMany();
     for (const device of devices) {
-      this.createSession(device.id, device.name);
+      const safeSession = `dev_${device.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+      const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
+      if (fs.existsSync(tokenDir) || device.phoneNumber || device.status !== 'DISCONNECTED') {
+        console.log(`[Worker Init] Auto-restoring session for device: ${device.name} (${device.id})`);
+        this.createSession(device.id, device.name, true);
+        // Wait 7 seconds between launches so browsers don't compete for memory and CPU
+        await new Promise((r) => setTimeout(r, 7000));
+      }
     }
   }
 
-  async createSession(deviceId: string, sessionName: string) {
+  startAutoRecoveryWatcher() {
+    if (this.isWatcherRunning) return;
+    this.isWatcherRunning = true;
+
+    // Run health check and auto-recovery every 25 seconds
+    setInterval(async () => {
+      try {
+        await this.checkAndRecoverDevices();
+      } catch (err: any) {
+        console.warn('[AutoRecoveryWatcher] Error during check:', err.message);
+      }
+    }, 25000);
+  }
+
+  private async checkAndRecoverDevices() {
+    // If a session is currently starting up, wait for it to finish before starting another
+    if (this.inProgressSessions.size > 0) return;
+
+    const devices = await prisma.device.findMany();
+
+    for (const device of devices) {
+      if (this.inProgressSessions.has(device.id)) continue;
+
+      const client = this.sessions.get(device.id);
+      if (client) {
+        let isConn = false;
+        try {
+          isConn = await client.isConnected();
+        } catch {
+          isConn = false;
+        }
+
+        if (isConn) {
+          if (device.status !== 'CONNECTED') {
+            await this.updateDeviceStatus(device.id, 'CONNECTED', null);
+          }
+        }
+      } else {
+        // No client instance currently active in memory
+        // If device has a token folder or has a known phoneNumber, and is NOT in QR_READY waiting for user scan
+        const safeSession = `dev_${device.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
+
+        if ((fs.existsSync(tokenDir) || device.phoneNumber) && device.status !== 'QR_READY') {
+          console.log(`[AutoRecoveryWatcher] Found disconnected paired device: ${device.name} (${device.id}). Initiating auto-connect...`);
+          this.reconnectingDevices.add(device.id);
+          this.createSession(device.id, device.name, true);
+          // Only start 1 browser session per cycle to keep server smooth
+          break;
+        }
+      }
+    }
+  }
+
+  async createSession(deviceId: string, sessionName: string, isAutoRecovery = false) {
+    if (this.inProgressSessions.has(deviceId)) {
+      console.log(`[createSession] Session creation already in progress for ${deviceId}, skipping duplicate.`);
+      return;
+    }
+    this.inProgressSessions.add(deviceId);
+
     const safeSession = `dev_${deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
     // Clean up any stale singleton locks from previous abruptly terminated browser processes
@@ -44,13 +114,27 @@ class WhatsAppManager {
         session: safeSession,
         catchQR: (base64Qr, asciiQR, attempts, urlCode) => {
           this.updateDeviceStatus(deviceId, 'QR_READY', base64Qr);
+
+          // If device was previously paired or auto-recovering, generating a QR means TRUE LOGOUT!
+          if (!this.loggedOutNotified.has(deviceId)) {
+            prisma.device.findUnique({ where: { id: deviceId } }).then((dev) => {
+              if (dev?.phoneNumber || isAutoRecovery) {
+                this.loggedOutNotified.add(deviceId);
+                this.reconnectingDevices.delete(deviceId);
+                console.warn(`[Auto-Recovery] Device ${deviceId} (${sessionName}) requires QR scan: TRUE LOGOUT detected!`);
+                this.sendAlert(deviceId, sessionName, 'LOGOUT', dev?.phoneNumber, 'Sesi telah dicabut dari WhatsApp ponsel.');
+              }
+            }).catch(() => {});
+          }
         },
         statusFind: (statusSession: any, session: string) => {
           console.log(`[StatusFind] Device ${deviceId} (${sessionName}): ${statusSession} [${session}]`);
           if (
             statusSession === 'isLogged' || 
-            statusSession === 'qrReadSuccess'
+            statusSession === 'qrReadSuccess' ||
+            statusSession === 'inChat'
           ) {
+            this.loggedOutNotified.delete(deviceId);
             const isRecon = this.reconnectingDevices.has(deviceId);
             this.reconnectingDevices.delete(deviceId);
             this.updateDeviceStatus(deviceId, 'CONNECTED', null);
@@ -59,10 +143,13 @@ class WhatsAppManager {
             }
           } else if (statusSession === 'notLogged') {
             // Sesi BENAR-BENAR LOGOUT dari HP!
-            console.warn(`[StatusFind] Device ${deviceId} (${sessionName}) has logged out from mobile!`);
-            this.reconnectingDevices.delete(deviceId);
-            this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
-            this.sendAlert(deviceId, sessionName, 'LOGOUT');
+            console.warn(`[StatusFind] Device ${deviceId} (${sessionName}) notLogged: Logout detected!`);
+            if (!this.loggedOutNotified.has(deviceId)) {
+              this.loggedOutNotified.add(deviceId);
+              this.reconnectingDevices.delete(deviceId);
+              this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
+              this.sendAlert(deviceId, sessionName, 'LOGOUT');
+            }
           } else if (
             statusSession === 'desconnectedMobile' || 
             statusSession === 'browserClose' || 
@@ -181,6 +268,7 @@ class WhatsAppManager {
         });
         console.log(`✅ Device ${deviceId} [${sessionName}] CONNECTED! Phone: ${phoneNumber || 'detected'}`);
 
+        this.loggedOutNotified.delete(deviceId);
         const isRecon = this.reconnectingDevices.has(deviceId);
         this.reconnectingDevices.delete(deviceId);
         await this.sendAlert(deviceId, sessionName, isRecon ? 'RECONNECTED' : 'CONNECTED', phoneNumber);
@@ -191,6 +279,8 @@ class WhatsAppManager {
     } catch (error) {
       console.error(`Error creating session ${sessionName}:`, error);
       this.updateDeviceStatus(deviceId, 'DISCONNECTED');
+    } finally {
+      this.inProgressSessions.delete(deviceId);
     }
   }
 
@@ -239,20 +329,31 @@ class WhatsAppManager {
     this.reconnectingDevices.add(deviceId);
     console.log(`[Auto-Reconnect] Device ${deviceId} (${sessionName}) disconnected (${reason}). Attempting auto-recovery in background...`);
 
+    await this.updateDeviceStatus(deviceId, 'DISCONNECTED');
+
     await this.sendAlert(
       deviceId, 
       sessionName, 
       'DISCONNECTED', 
       null, 
-      `Koneksi terputus sesaat (${reason}). Sistem sedang mencoba Auto-Reconnect...`
+      `Koneksi socket terputus (${reason}). Sistem sedang mencoba Auto-Reconnect otomatis...`
     );
 
-    // Wait 6 seconds, then check connection and reload page without forcing user to scan QR
+    const existingTimer = this.reconnectTimers.get(deviceId);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    // Wait 12 seconds, check connection, if not recovered naturally, cleanly restart session from tokens
     const timer = setTimeout(async () => {
       try {
         const client = this.sessions.get(deviceId);
         if (client) {
-          const isConn = await client.isConnected().catch(() => false);
+          let isConn = false;
+          try {
+            isConn = await client.isConnected();
+          } catch {
+            isConn = false;
+          }
+
           if (isConn) {
             console.log(`[Auto-Reconnect] Device ${deviceId} recovered automatically!`);
             this.reconnectingDevices.delete(deviceId);
@@ -261,17 +362,20 @@ class WhatsAppManager {
             return;
           }
 
-          // Try page reload to re-establish WSS connection
-          const page = (client as any).page;
-          if (page && !page.isClosed()) {
-            console.log(`[Auto-Reconnect] Reloading WhatsApp Web page for ${deviceId}...`);
-            await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
-          }
+          console.log(`[Auto-Reconnect] Recreating clean session for ${deviceId} from stored tokens...`);
+          try {
+            await client.close();
+          } catch {}
+          this.sessions.delete(deviceId);
         }
+
+        this.inProgressSessions.delete(deviceId);
+        this.createSession(deviceId, sessionName, true);
       } catch (err: any) {
         console.warn(`[Auto-Reconnect] Recovery attempt error for ${deviceId}:`, err.message);
+        this.inProgressSessions.delete(deviceId);
       }
-    }, 6000);
+    }, 12000);
 
     this.reconnectTimers.set(deviceId, timer);
   }
@@ -282,19 +386,23 @@ class WhatsAppManager {
       console.log(`[onStateChange] Device ${deviceId} (${sessionName}) -> State: ${state}`);
 
       if (state === 'CONNECTED') {
+        this.loggedOutNotified.delete(deviceId);
         const isRecon = this.reconnectingDevices.has(deviceId);
         this.reconnectingDevices.delete(deviceId);
         await this.updateDeviceStatus(deviceId, 'CONNECTED', null);
         if (isRecon) {
           await this.sendAlert(deviceId, sessionName, 'RECONNECTED');
         }
-      } else if (state === 'UNPAIRED' || state === 'UNLAUNCHED') {
+      } else if (state === 'UNPAIRED') {
         // True logout from mobile!
-        this.reconnectingDevices.delete(deviceId);
-        await this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
-        await this.sendAlert(deviceId, sessionName, 'LOGOUT');
-      } else if (state === 'DISCONNECTED' || state === 'TIMEOUT') {
-        // Temporary network drop
+        if (!this.loggedOutNotified.has(deviceId)) {
+          this.loggedOutNotified.add(deviceId);
+          this.reconnectingDevices.delete(deviceId);
+          await this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
+          await this.sendAlert(deviceId, sessionName, 'LOGOUT');
+        }
+      } else if (state === 'DISCONNECTED' || state === 'TIMEOUT' || state === 'UNLAUNCHED') {
+        // Temporary network drop / socket glitch
         await this.handleTemporaryDisconnect(deviceId, sessionName, state);
       }
     });
@@ -510,6 +618,15 @@ class WhatsAppManager {
   }
 
   async logout(deviceId: string) {
+    this.inProgressSessions.delete(deviceId);
+    this.reconnectingDevices.delete(deviceId);
+    this.loggedOutNotified.delete(deviceId);
+    const timer = this.reconnectTimers.get(deviceId);
+    if (timer) {
+      clearTimeout(timer);
+      this.reconnectTimers.delete(deviceId);
+    }
+
     const client = this.sessions.get(deviceId);
     if (client) {
       try {
