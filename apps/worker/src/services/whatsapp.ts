@@ -3,6 +3,7 @@ import { prisma } from '@wagtw/database';
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
+import { exec } from 'child_process';
 import { aiService } from './ai';
 import { telegramNotifier } from './telegram';
 
@@ -15,6 +16,8 @@ class WhatsAppManager {
   private loggedOutNotified: Set<string> = new Set();
   private lastAttemptTime: Map<string, number> = new Map();
   private isWatcherRunning: boolean = false;
+  private disconnectAlertTimers: Map<string, NodeJS.Timeout> = new Map();
+  private disconnectedAlertSent: Set<string> = new Set();
 
   async init() {
     // 1. Start continuous auto-recovery background watcher
@@ -36,14 +39,14 @@ class WhatsAppManager {
     if (this.isWatcherRunning) return;
     this.isWatcherRunning = true;
 
-    // Run health check and auto-recovery every 35 seconds
+    // Run health check and auto-recovery every 50 seconds (lightweight in-memory check)
     setInterval(async () => {
       try {
         await this.checkAndRecoverDevices();
       } catch (err: any) {
         console.warn('[AutoRecoveryWatcher] Error during check:', err.message);
       }
-    }, 35000);
+    }, 50000);
   }
 
   private async checkAndRecoverDevices() {
@@ -51,6 +54,14 @@ class WhatsAppManager {
     if (this.inProgressSessions.size > 0) return;
 
     const devices = await prisma.device.findMany();
+
+    // Auto-clean any zombie sessions in memory that were deleted from DB
+    for (const [activeDeviceId] of this.sessions.entries()) {
+      if (!devices.some((d) => d.id === activeDeviceId)) {
+        console.log(`[AutoRecoveryWatcher] Found orphaned session ${activeDeviceId} not in DB. Purging...`);
+        this.logout(activeDeviceId).catch(() => {});
+      }
+    }
 
     for (const device of devices) {
       if (this.inProgressSessions.has(device.id)) continue;
@@ -96,6 +107,13 @@ class WhatsAppManager {
       return;
     }
 
+    // Verify device exists in database before launching Chrome
+    const dev = await prisma.device.findUnique({ where: { id: deviceId } });
+    if (!dev) {
+      console.log(`[createSession] Device ${deviceId} no longer exists in database. Aborting.`);
+      return;
+    }
+
     // Clean up any old or dead client for this device first
     const existingClient = this.sessions.get(deviceId);
     if (existingClient) {
@@ -107,7 +125,7 @@ class WhatsAppManager {
       }
       if (isConn) {
         console.log(`[createSession] Client for ${deviceId} is already connected.`);
-        await this.updateDeviceStatus(deviceId, 'CONNECTED', null);
+        await this.handleConnectionSuccess(deviceId, sessionName, dev.phoneNumber);
         return;
       }
       try {
@@ -140,14 +158,14 @@ class WhatsAppManager {
         catchQR: (base64Qr, asciiQR, attempts, urlCode) => {
           this.updateDeviceStatus(deviceId, 'QR_READY', base64Qr);
 
-          // If device was previously paired or auto-recovering, generating a QR means TRUE LOGOUT!
+          // If device was previously paired, generating a QR means TRUE LOGOUT from phone!
           if (!this.loggedOutNotified.has(deviceId)) {
-            prisma.device.findUnique({ where: { id: deviceId } }).then((dev) => {
-              if (dev?.phoneNumber || isAutoRecovery) {
+            prisma.device.findUnique({ where: { id: deviceId } }).then((currentDev) => {
+              if (currentDev?.phoneNumber) {
                 this.loggedOutNotified.add(deviceId);
                 this.reconnectingDevices.delete(deviceId);
                 console.warn(`[Auto-Recovery] Device ${deviceId} (${sessionName}) requires QR scan: TRUE LOGOUT detected!`);
-                this.sendAlert(deviceId, sessionName, 'LOGOUT', dev?.phoneNumber, 'Sesi telah dicabut dari WhatsApp ponsel.').catch(() => {});
+                this.handleTrueLogout(deviceId, sessionName);
               }
             }).catch(() => {});
           }
@@ -159,30 +177,28 @@ class WhatsAppManager {
             statusSession === 'qrReadSuccess' ||
             statusSession === 'inChat'
           ) {
-            this.loggedOutNotified.delete(deviceId);
-            const isRecon = this.reconnectingDevices.has(deviceId);
-            this.reconnectingDevices.delete(deviceId);
-            this.updateDeviceStatus(deviceId, 'CONNECTED', null);
-            if (isRecon) {
-              this.sendAlert(deviceId, sessionName, 'RECONNECTED').catch(() => {});
-            }
+            this.handleConnectionSuccess(deviceId, sessionName);
           } else if (statusSession === 'notLogged') {
-            // Sesi BENAR-BENAR LOGOUT dari HP!
             console.warn(`[StatusFind] Device ${deviceId} (${sessionName}) notLogged: Logout detected!`);
-            if (!this.loggedOutNotified.has(deviceId)) {
-              this.loggedOutNotified.add(deviceId);
-              this.reconnectingDevices.delete(deviceId);
-              this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
-              this.sendAlert(deviceId, sessionName, 'LOGOUT').catch(() => {});
-            }
+            this.handleTrueLogout(deviceId, sessionName);
           } else if (
             statusSession === 'desconnectedMobile' || 
             statusSession === 'browserClose' || 
-            statusSession === 'serverClose' ||
-            statusSession === 'autocloseCalled'
+            statusSession === 'serverClose'
           ) {
             // Disconnect SEMENTARA / Socket Glitch
             this.handleTemporaryDisconnect(deviceId, sessionName, statusSession);
+          } else if (statusSession === 'autocloseCalled') {
+            // QR scan timeout (nobody scanned QR within 3 minutes) - no alert needed, avoid infinite loop!
+            console.log(`[StatusFind] Device ${deviceId} (${sessionName}) QR scan expired (autocloseCalled).`);
+            this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
+            this.inProgressSessions.delete(deviceId);
+            this.reconnectingDevices.delete(deviceId);
+            const activeClient = this.sessions.get(deviceId);
+            if (activeClient) {
+              try { activeClient.close(); } catch {}
+              this.sessions.delete(deviceId);
+            }
           }
         },
         autoClose: 180000,
@@ -212,6 +228,15 @@ class WhatsAppManager {
         ],
       });
 
+      // Verify device was not deleted from DB while browser was launching
+      const stillExists = await prisma.device.findUnique({ where: { id: deviceId } });
+      if (!stillExists) {
+        console.log(`[createSession] Device ${deviceId} was deleted during browser initialization. Terminating session.`);
+        try { await client.close(); } catch {}
+        try { exec(`pkill -9 -f ${safeSession}`, () => {}); } catch {}
+        return;
+      }
+
       this.sessions.set(deviceId, client);
       this.setupEventListeners(deviceId, sessionName, client);
 
@@ -238,6 +263,7 @@ class WhatsAppManager {
       }
 
       try {
+        const isNewPairing = Boolean(!stillExists.phoneNumber && phoneNumber);
         await prisma.device.update({
           where: { id: deviceId },
           data: { 
@@ -249,10 +275,7 @@ class WhatsAppManager {
         });
         console.log(`✅ Device ${deviceId} [${sessionName}] CONNECTED! Phone: ${phoneNumber || 'detected'}`);
 
-        this.loggedOutNotified.delete(deviceId);
-        const isRecon = this.reconnectingDevices.has(deviceId);
-        this.reconnectingDevices.delete(deviceId);
-        await this.sendAlert(deviceId, sessionName, isRecon ? 'RECONNECTED' : 'CONNECTED', phoneNumber);
+        await this.handleConnectionSuccess(deviceId, sessionName, phoneNumber, isNewPairing);
       } catch (e: any) {
         console.warn(`Could not save CONNECTED status in DB:`, e.message);
       }
@@ -272,6 +295,56 @@ class WhatsAppManager {
       this.updateDeviceStatus(deviceId, 'DISCONNECTED');
     } finally {
       this.inProgressSessions.delete(deviceId);
+    }
+  }
+
+  private async handleConnectionSuccess(
+    deviceId: string, 
+    sessionName: string, 
+    phoneNumber?: string | null,
+    isNewPairing = false
+  ) {
+    this.loggedOutNotified.delete(deviceId);
+    this.reconnectingDevices.delete(deviceId);
+
+    // Cancel pending disconnect alert timer if connection recovered naturally within grace period!
+    const pendingTimer = this.disconnectAlertTimers.get(deviceId);
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      this.disconnectAlertTimers.delete(deviceId);
+      console.log(`[Auto-Reconnect] Device ${deviceId} recovered within grace period. Disconnect alert canceled.`);
+    }
+
+    await this.updateDeviceStatus(deviceId, 'CONNECTED', null);
+
+    // Only send Telegram notification if:
+    // 1) It is a brand-new pairing
+    // 2) A DISCONNECTED alert was actually sent earlier to Telegram
+    if (isNewPairing) {
+      await this.sendAlert(deviceId, sessionName, 'CONNECTED', phoneNumber);
+    } else if (this.disconnectedAlertSent.has(deviceId)) {
+      this.disconnectedAlertSent.delete(deviceId);
+      await this.sendAlert(deviceId, sessionName, 'RECONNECTED', phoneNumber);
+    }
+  }
+
+  private async handleTrueLogout(deviceId: string, sessionName: string) {
+    const dev = await prisma.device.findUnique({ where: { id: deviceId } });
+    if (!dev || !dev.phoneNumber) return; // Unpaired device, no logout alert needed
+
+    // Cancel any pending temporary disconnect alert
+    const pendingTimer = this.disconnectAlertTimers.get(deviceId);
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      this.disconnectAlertTimers.delete(deviceId);
+    }
+    this.disconnectedAlertSent.delete(deviceId);
+
+    if (!this.loggedOutNotified.has(deviceId)) {
+      this.loggedOutNotified.add(deviceId);
+      this.reconnectingDevices.delete(deviceId);
+      await this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
+      await this.sendAlert(deviceId, sessionName, 'LOGOUT', dev.phoneNumber);
     }
   }
 
@@ -313,29 +386,61 @@ class WhatsAppManager {
   }
 
   private async handleTemporaryDisconnect(deviceId: string, sessionName: string, reason: string) {
-    if (this.reconnectingDevices.has(deviceId)) {
-      return; // Already attempting auto-reconnect
+    const dev = await prisma.device.findUnique({ where: { id: deviceId } });
+    if (!dev) {
+      this.logout(deviceId).catch(() => {});
+      return;
     }
 
-    this.reconnectingDevices.add(deviceId);
-    console.log(`[Auto-Reconnect] Device ${deviceId} (${sessionName}) disconnected (${reason}). Attempting auto-recovery in background...`);
+    // Only alert and auto-recover paired devices (devices that were actually connected with a phone number)
+    if (!dev.phoneNumber) {
+      console.log(`[Auto-Reconnect] Device ${deviceId} is not paired (${reason}). Skipping alert.`);
+      await this.updateDeviceStatus(deviceId, 'DISCONNECTED');
+      return;
+    }
 
+    if (this.reconnectingDevices.has(deviceId)) {
+      return; // Already handling reconnect
+    }
+    this.reconnectingDevices.add(deviceId);
+
+    console.log(`[Auto-Reconnect] Device ${deviceId} (${sessionName}) temporary glitch (${reason}). Waiting 25s smart debounce before alerting...`);
     await this.updateDeviceStatus(deviceId, 'DISCONNECTED');
 
-    await this.sendAlert(
-      deviceId, 
-      sessionName, 
-      'DISCONNECTED', 
-      null, 
-      `Koneksi socket terputus (${reason}). Sistem sedang mencoba Auto-Reconnect otomatis...`
-    );
+    // SMART DEBOUNCE: Don't spam Telegram immediately for normal transient drops (2-15s)!
+    // Wait 25 seconds. If connection recovers within 25s, timer is canceled and 0 Telegram messages are sent!
+    const existingAlertTimer = this.disconnectAlertTimers.get(deviceId);
+    if (existingAlertTimer) clearTimeout(existingAlertTimer);
 
+    const alertTimer = setTimeout(async () => {
+      this.disconnectAlertTimers.delete(deviceId);
+      const current = await prisma.device.findUnique({ where: { id: deviceId } });
+      if (!current || current.status === 'CONNECTED' || !current.phoneNumber) return;
+
+      this.disconnectedAlertSent.add(deviceId);
+      await this.sendAlert(
+        deviceId,
+        sessionName,
+        'DISCONNECTED',
+        current.phoneNumber,
+        `Koneksi WhatsApp terputus (${reason}). Sistem sedang mencoba Auto-Reconnect otomatis...`
+      );
+    }, 25000);
+
+    this.disconnectAlertTimers.set(deviceId, alertTimer);
+
+    // Auto-reconnect worker logic: check after 12 seconds
     const existingTimer = this.reconnectTimers.get(deviceId);
     if (existingTimer) clearTimeout(existingTimer);
 
-    // Wait 12 seconds, check connection, if not recovered naturally, cleanly restart session from tokens
     const timer = setTimeout(async () => {
       try {
+        const checkDev = await prisma.device.findUnique({ where: { id: deviceId } });
+        if (!checkDev || !checkDev.phoneNumber) {
+          this.reconnectingDevices.delete(deviceId);
+          return;
+        }
+
         const client = this.sessions.get(deviceId);
         if (client) {
           let isConn = false;
@@ -346,10 +451,8 @@ class WhatsAppManager {
           }
 
           if (isConn) {
-            console.log(`[Auto-Reconnect] Device ${deviceId} recovered automatically!`);
-            this.reconnectingDevices.delete(deviceId);
-            await this.updateDeviceStatus(deviceId, 'CONNECTED', null);
-            await this.sendAlert(deviceId, sessionName, 'RECONNECTED');
+            console.log(`[Auto-Reconnect] Device ${deviceId} recovered naturally!`);
+            await this.handleConnectionSuccess(deviceId, sessionName, checkDev.phoneNumber);
             return;
           }
 
@@ -377,23 +480,10 @@ class WhatsAppManager {
       console.log(`[onStateChange] Device ${deviceId} (${sessionName}) -> State: ${state}`);
 
       if (state === 'CONNECTED') {
-        this.loggedOutNotified.delete(deviceId);
-        const isRecon = this.reconnectingDevices.has(deviceId);
-        this.reconnectingDevices.delete(deviceId);
-        await this.updateDeviceStatus(deviceId, 'CONNECTED', null);
-        if (isRecon) {
-          await this.sendAlert(deviceId, sessionName, 'RECONNECTED');
-        }
+        await this.handleConnectionSuccess(deviceId, sessionName);
       } else if (state === 'UNPAIRED') {
-        // True logout from mobile!
-        if (!this.loggedOutNotified.has(deviceId)) {
-          this.loggedOutNotified.add(deviceId);
-          this.reconnectingDevices.delete(deviceId);
-          await this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
-          await this.sendAlert(deviceId, sessionName, 'LOGOUT');
-        }
+        await this.handleTrueLogout(deviceId, sessionName);
       } else if (state === 'DISCONNECTED' || state === 'TIMEOUT' || state === 'UNLAUNCHED') {
-        // Temporary network drop / socket glitch
         await this.handleTemporaryDisconnect(deviceId, sessionName, state);
       }
     });
@@ -612,6 +702,14 @@ class WhatsAppManager {
     this.inProgressSessions.delete(deviceId);
     this.reconnectingDevices.delete(deviceId);
     this.loggedOutNotified.delete(deviceId);
+    this.disconnectedAlertSent.delete(deviceId);
+
+    const alertTimer = this.disconnectAlertTimers.get(deviceId);
+    if (alertTimer) {
+      clearTimeout(alertTimer);
+      this.disconnectAlertTimers.delete(deviceId);
+    }
+
     const timer = this.reconnectTimers.get(deviceId);
     if (timer) {
       clearTimeout(timer);
@@ -631,12 +729,17 @@ class WhatsAppManager {
         console.warn(`[Logout] client.close error for ${deviceId}:`, err.message);
       }
       this.sessions.delete(deviceId);
-      await this.updateDeviceStatus(deviceId, 'DISCONNECTED');
     }
+    await this.updateDeviceStatus(deviceId, 'DISCONNECTED');
+
+    // Force-kill any lingering Chrome processes for this device
+    const safeSession = `dev_${deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    try {
+      exec(`pkill -9 -f ${safeSession}`, () => {});
+    } catch {}
 
     // Clean up session token directory on disk
     try {
-      const safeSession = `dev_${deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
       const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
       if (fs.existsSync(tokenDir)) {
         fs.rmSync(tokenDir, { recursive: true, force: true });

@@ -157,6 +157,7 @@ export default function Warmup() {
   };
 
   const connectedDevices = devices.filter((d) => d.status === 'CONNECTED');
+  const selectedValidCount = (config.deviceIds || []).filter((id) => devices.some((d) => d.id === id)).length;
 
   return (
     <div className="space-y-8 animate-fade-in pb-12">
@@ -457,7 +458,7 @@ export default function Warmup() {
                   Perangkat Yang Dilibatkan ({devices.length})
                 </label>
                 <span className="text-[11px] text-slate-400">
-                  {config.deviceIds.length === 0 ? 'Semua Device Terhubung' : `${config.deviceIds.length} Terpilih`}
+                  {selectedValidCount === 0 ? 'Semua Device Terhubung' : `${selectedValidCount} Terpilih`}
                 </span>
               </div>
 

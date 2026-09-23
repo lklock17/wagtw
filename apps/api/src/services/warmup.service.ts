@@ -37,6 +37,19 @@ export class WarmupService {
           deviceIds: []
         }
       });
+    } else if (config.deviceIds && config.deviceIds.length > 0) {
+      // Auto-clean any stale device IDs that no longer exist in DB
+      const existingDevices = await prisma.device.findMany({
+        where: { id: { in: config.deviceIds } },
+        select: { id: true }
+      });
+      const validIds = existingDevices.map((d) => d.id);
+      if (validIds.length !== config.deviceIds.length) {
+        config = await prisma.warmupConfig.update({
+          where: { id: 'default' },
+          data: { deviceIds: validIds }
+        });
+      }
     }
 
     return config;
