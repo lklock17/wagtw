@@ -18,6 +18,8 @@ class WhatsAppManager {
   private isWatcherRunning: boolean = false;
   private disconnectAlertTimers: Map<string, NodeJS.Timeout> = new Map();
   private disconnectedAlertSent: Set<string> = new Set();
+  private loggedOutDevices: Set<string> = new Set();
+  private closingDevices: Set<string> = new Set();
 
   async init() {
     // 1. Start continuous auto-recovery background watcher
@@ -88,8 +90,13 @@ class WhatsAppManager {
           continue;
         }
 
-        // Only auto-recover paired devices (device.phoneNumber exists) that are not currently in QR_READY
-        if (device.phoneNumber && device.status !== 'QR_READY') {
+        // Only auto-recover paired devices that are NOT logged out, NOT closing, and NOT in QR_READY
+        if (
+          device.phoneNumber && 
+          device.status !== 'QR_READY' && 
+          !this.loggedOutDevices.has(device.id) &&
+          !this.closingDevices.has(device.id)
+        ) {
           console.log(`[AutoRecoveryWatcher] Found disconnected paired device: ${device.name} (${device.id}). Initiating auto-connect...`);
           this.lastAttemptTime.set(device.id, Date.now());
           this.reconnectingDevices.add(device.id);
@@ -112,6 +119,14 @@ class WhatsAppManager {
     if (!dev) {
       console.log(`[createSession] Device ${deviceId} no longer exists in database. Aborting.`);
       return;
+    }
+
+    // If user clicked manually from dashboard, reset logged-out and alert flags
+    if (!isAutoRecovery) {
+      this.loggedOutDevices.delete(deviceId);
+      this.loggedOutNotified.delete(deviceId);
+      this.disconnectedAlertSent.delete(deviceId);
+      this.closingDevices.delete(deviceId);
     }
 
     // Clean up any old or dead client for this device first
@@ -191,6 +206,8 @@ class WhatsAppManager {
           } else if (statusSession === 'autocloseCalled') {
             // QR scan timeout (nobody scanned QR within 3 minutes) - no alert needed, avoid infinite loop!
             console.log(`[StatusFind] Device ${deviceId} (${sessionName}) QR scan expired (autocloseCalled).`);
+            this.closingDevices.add(deviceId);
+            this.loggedOutDevices.add(deviceId);
             this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
             this.inProgressSessions.delete(deviceId);
             this.reconnectingDevices.delete(deviceId);
@@ -199,6 +216,7 @@ class WhatsAppManager {
               try { activeClient.close(); } catch {}
               this.sessions.delete(deviceId);
             }
+            setTimeout(() => this.closingDevices.delete(deviceId), 8000);
           }
         },
         autoClose: 180000,
@@ -332,6 +350,11 @@ class WhatsAppManager {
     const dev = await prisma.device.findUnique({ where: { id: deviceId } });
     if (!dev || !dev.phoneNumber) return; // Unpaired device, no logout alert needed
 
+    // Mark as closing and permanently logged-out so it will NEVER auto-recover or loop
+    this.closingDevices.add(deviceId);
+    this.loggedOutDevices.add(deviceId);
+    this.reconnectingDevices.delete(deviceId);
+
     // Cancel any pending temporary disconnect alert
     const pendingTimer = this.disconnectAlertTimers.get(deviceId);
     if (pendingTimer) {
@@ -340,12 +363,43 @@ class WhatsAppManager {
     }
     this.disconnectedAlertSent.delete(deviceId);
 
+    const reconTimer = this.reconnectTimers.get(deviceId);
+    if (reconTimer) {
+      clearTimeout(reconTimer);
+      this.reconnectTimers.delete(deviceId);
+    }
+
+    // STRICTLY 1X NOTIFICATION FOR LOGOUT:
     if (!this.loggedOutNotified.has(deviceId)) {
       this.loggedOutNotified.add(deviceId);
-      this.reconnectingDevices.delete(deviceId);
       await this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
       await this.sendAlert(deviceId, sessionName, 'LOGOUT', dev.phoneNumber);
     }
+
+    // Clean up browser and dead tokens immediately so it won't linger or consume memory
+    const client = this.sessions.get(deviceId);
+    if (client) {
+      try { await client.close(); } catch {}
+      this.sessions.delete(deviceId);
+    }
+    this.inProgressSessions.delete(deviceId);
+
+    const safeSession = `dev_${deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    try {
+      exec(`pkill -9 -f ${safeSession}`, () => {});
+    } catch {}
+
+    try {
+      const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
+      if (fs.existsSync(tokenDir)) {
+        fs.rmSync(tokenDir, { recursive: true, force: true });
+        console.log(`[handleTrueLogout] Invalidated tokens purged for ${deviceId}`);
+      }
+    } catch {}
+
+    setTimeout(() => {
+      this.closingDevices.delete(deviceId);
+    }, 10000);
   }
 
   private async updateDeviceStatus(deviceId: string, status: any, qrCode?: string | null) {
@@ -386,6 +440,10 @@ class WhatsAppManager {
   }
 
   private async handleTemporaryDisconnect(deviceId: string, sessionName: string, reason: string) {
+    if (this.closingDevices.has(deviceId) || this.loggedOutDevices.has(deviceId)) {
+      return; // Deliberate close or already logged out: DO NOT reconnect or alert!
+    }
+
     const dev = await prisma.device.findUnique({ where: { id: deviceId } });
     if (!dev) {
       this.logout(deviceId).catch(() => {});
@@ -404,30 +462,33 @@ class WhatsAppManager {
     }
     this.reconnectingDevices.add(deviceId);
 
-    console.log(`[Auto-Reconnect] Device ${deviceId} (${sessionName}) temporary glitch (${reason}). Waiting 25s smart debounce before alerting...`);
+    console.log(`[Auto-Reconnect] Device ${deviceId} (${sessionName}) temporary glitch (${reason}).`);
     await this.updateDeviceStatus(deviceId, 'DISCONNECTED');
 
-    // SMART DEBOUNCE: Don't spam Telegram immediately for normal transient drops (2-15s)!
-    // Wait 25 seconds. If connection recovers within 25s, timer is canceled and 0 Telegram messages are sent!
-    const existingAlertTimer = this.disconnectAlertTimers.get(deviceId);
-    if (existingAlertTimer) clearTimeout(existingAlertTimer);
+    // STRICTLY 1X NOTIFICATION PER DISCONNECT EPISODE:
+    // If a disconnect alert was already sent, or is already pending, DO NOT schedule another alert!
+    if (!this.disconnectedAlertSent.has(deviceId) && !this.disconnectAlertTimers.has(deviceId)) {
+      const alertTimer = setTimeout(async () => {
+        this.disconnectAlertTimers.delete(deviceId);
+        if (this.loggedOutDevices.has(deviceId)) return;
 
-    const alertTimer = setTimeout(async () => {
-      this.disconnectAlertTimers.delete(deviceId);
-      const current = await prisma.device.findUnique({ where: { id: deviceId } });
-      if (!current || current.status === 'CONNECTED' || !current.phoneNumber) return;
+        const current = await prisma.device.findUnique({ where: { id: deviceId } });
+        if (!current || current.status === 'CONNECTED' || !current.phoneNumber) return;
 
-      this.disconnectedAlertSent.add(deviceId);
-      await this.sendAlert(
-        deviceId,
-        sessionName,
-        'DISCONNECTED',
-        current.phoneNumber,
-        `Koneksi WhatsApp terputus (${reason}). Sistem sedang mencoba Auto-Reconnect otomatis...`
-      );
-    }, 25000);
+        if (!this.disconnectedAlertSent.has(deviceId)) {
+          this.disconnectedAlertSent.add(deviceId);
+          await this.sendAlert(
+            deviceId,
+            sessionName,
+            'DISCONNECTED',
+            current.phoneNumber,
+            `Koneksi WhatsApp terputus (${reason}). Sistem sedang mencoba Auto-Reconnect otomatis...`
+          );
+        }
+      }, 25000);
 
-    this.disconnectAlertTimers.set(deviceId, alertTimer);
+      this.disconnectAlertTimers.set(deviceId, alertTimer);
+    }
 
     // Auto-reconnect worker logic: check after 12 seconds
     const existingTimer = this.reconnectTimers.get(deviceId);
@@ -435,6 +496,11 @@ class WhatsAppManager {
 
     const timer = setTimeout(async () => {
       try {
+        if (this.loggedOutDevices.has(deviceId)) {
+          this.reconnectingDevices.delete(deviceId);
+          return;
+        }
+
         const checkDev = await prisma.device.findUnique({ where: { id: deviceId } });
         if (!checkDev || !checkDev.phoneNumber) {
           this.reconnectingDevices.delete(deviceId);
@@ -457,10 +523,12 @@ class WhatsAppManager {
           }
 
           console.log(`[Auto-Reconnect] Recreating clean session for ${deviceId} from stored tokens...`);
+          this.closingDevices.add(deviceId);
           try {
             await client.close();
           } catch {}
           this.sessions.delete(deviceId);
+          setTimeout(() => this.closingDevices.delete(deviceId), 5000);
         }
 
         this.inProgressSessions.delete(deviceId);
