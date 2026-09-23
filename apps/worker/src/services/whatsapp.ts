@@ -208,55 +208,9 @@ class WhatsAppManager {
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--no-first-run',
-          '--no-zygote',
-          '--window-size=1024,768',
-          '--disable-extensions',
-          '--disable-default-apps',
-          '--disable-sync',
-          '--lang=id-ID,id,en-US,en',
-          '--disable-blink-features=AutomationControlled'
+          '--no-zygote'
         ],
       });
-
-      // Apply Human-Like Fingerprint & Stealth Hardware Masking
-      try {
-        const page = (client as any).page;
-        if (page && typeof page.evaluateOnNewDocument === 'function') {
-          await page.evaluateOnNewDocument(() => {
-            // 1. Hide Webdriver automation flag
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            // 2. Realistic Desktop Hardware: 8 Core CPU, 8GB RAM
-            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-            // 3. Languages: Indonesian + English
-            Object.defineProperty(navigator, 'languages', { get: () => ['id-ID', 'id', 'en-US', 'en'] });
-            // 4. Chrome Runtime Object
-            (window as any).chrome = {
-              runtime: {},
-              loadTimes: function() {},
-              csi: function() {},
-              app: {}
-            };
-            // 5. Plugins spoofing
-            Object.defineProperty(navigator, 'plugins', {
-              get: () => [
-                { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-                { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-                { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
-              ]
-            });
-            // 6. WebGL Vendor & Renderer spoofing (Intel Iris Xe Graphics)
-            const getParameterProto = WebGLRenderingContext.prototype.getParameter;
-            WebGLRenderingContext.prototype.getParameter = function(param: number) {
-              if (param === 37445) return 'Intel Inc.'; // UNMASKED_VENDOR_WEBGL
-              if (param === 37446) return 'Intel(R) Iris(R) Xe Graphics'; // UNMASKED_RENDERER_WEBGL
-              return getParameterProto.apply(this, [param]);
-            };
-          });
-        }
-      } catch (fpErr: any) {
-        console.warn(`[Stealth Fingerprint Warning] Could not apply evaluateOnNewDocument for ${deviceId}:`, fpErr.message);
-      }
 
       this.sessions.set(deviceId, client);
       this.setupEventListeners(deviceId, sessionName, client);
