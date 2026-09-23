@@ -26,7 +26,8 @@ export const sendMessage = async (req: Request, res: Response) => {
     url, 
     caption,
     autoRotate = false,
-    failover = true 
+    failover = true,
+    delay
   } = req.body;
 
   const content = text || message;
@@ -35,6 +36,12 @@ export const sendMessage = async (req: Request, res: Response) => {
       success: false, 
       error: 'Missing required fields: "to" and ("text" or "message") are required' 
     });
+  }
+
+  // If delay is specified (in seconds), pause before sending
+  if (delay && Number(delay) > 0) {
+    const delayMs = Math.min(Number(delay) * 1000, 300000); // cap at 5 minutes
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
   const recipient = formatPhoneNumber(to);
