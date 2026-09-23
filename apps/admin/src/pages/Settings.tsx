@@ -14,17 +14,23 @@ import {
   Sparkles,
   Edit2,
   RefreshCw,
-  Cpu
+  Cpu,
+  Users,
+  KeyRound,
+  UserPlus,
+  Shield,
+  Lock,
+  Loader2
 } from 'lucide-react';
-import { autoReplyService, warmupService } from '../services/api';
+import { autoReplyService, warmupService, authService } from '../services/api';
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<'autoreply' | 'ai' | 'webhook' | 'system'>('autoreply');
+  const [activeTab, setActiveTab] = useState<'autoreply' | 'ai' | 'webhook' | 'system' | 'users'>('autoreply');
   const [rules, setRules] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [banner, setBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Modal State
+  // Modal State for Auto Reply
   const [showModal, setShowModal] = useState(false);
   const [editingRule, setEditingRule] = useState<any | null>(null);
   const [formMode, setFormMode] = useState<'text' | 'ai'>('text');
@@ -50,9 +56,39 @@ export default function Settings() {
   const [webhookTesting, setWebhookTesting] = useState(false);
   const [webhookResult, setWebhookResult] = useState<{ success: boolean; msg: string } | null>(null);
 
+  // User Management & Security State
+  const [users, setUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || '{}');
+    } catch {
+      return {};
+    }
+  });
+
+  // Change My Password State
+  const [myCurrentPassword, setMyCurrentPassword] = useState('');
+  const [myNewPassword, setMyNewPassword] = useState('');
+  const [myConfirmPassword, setMyConfirmPassword] = useState('');
+  const [changingMyPassword, setChangingMyPassword] = useState(false);
+
+  // Add Employee/User Modal State
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [addingUser, setAddingUser] = useState(false);
+
+  // Reset Other User Password Modal State
+  const [resettingUser, setResettingUser] = useState<any | null>(null);
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resettingPassword, setResettingPassword] = useState(false);
+
   useEffect(() => {
     fetchRules();
     loadAiConfig();
+    fetchUsersList();
   }, []);
 
   const fetchRules = async () => {
@@ -81,6 +117,18 @@ export default function Settings() {
     }
   };
 
+  const fetchUsersList = async () => {
+    setLoadingUsers(true);
+    try {
+      const res = await authService.getUsers();
+      setUsers(res.data || []);
+    } catch (err: any) {
+      console.error('Failed to fetch users:', err);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
   const handleFetch9routesModels = async () => {
     setFetchingModels(true);
     try {
@@ -88,40 +136,34 @@ export default function Settings() {
       const list = res.data?.models || res.data || [];
       if (Array.isArray(list) && list.length > 0) {
         setAvailableModels(list);
-        if (!list.includes(aiModel)) {
-          setAiModel(list[0]);
-        }
-        setBanner({ type: 'success', message: `Berhasil memuat ${list.length} model dari 9routes AI!` });
+        setBanner({ type: 'success', message: `Berhasil menemukan ${list.length} model aktif dari 9routes AI!` });
       } else {
-        setBanner({ type: 'error', message: 'Daftar model kosong dari server 9routes.' });
+        setBanner({ type: 'error', message: 'Tidak ada daftar model yang dikembalikan dari 9routes.' });
       }
       setTimeout(() => setBanner(null), 3500);
     } catch (err: any) {
-      setBanner({ type: 'error', message: 'Gagal memindai model 9routes: ' + (err.response?.data?.error || err.message) });
+      setBanner({ type: 'error', message: 'Gagal scan model 9routes: ' + (err.response?.data?.error || err.message) });
     } finally {
       setFetchingModels(false);
     }
   };
 
-  const handleSaveAiSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveAiConfig = async () => {
     setSavingAi(true);
     try {
       localStorage.setItem('wagtw_ai_enabled', String(aiEnabled));
       localStorage.setItem('wagtw_ai_prompt', aiSystemPrompt);
-      localStorage.setItem('wagtw_ai_model', aiModel);
 
-      // Also persist to backend warmupConfig so Worker can use the exact same 9routes settings
       await warmupService.updateConfig({
         aiBaseUrl,
         aiApiKey,
-        aiModel
+        aiModel,
       });
 
-      setBanner({ type: 'success', message: 'Konfigurasi 9routes AI berhasil disimpan dan disinkronkan!' });
+      setBanner({ type: 'success', message: 'Konfigurasi 9routes AI berhasil disimpan!' });
       setTimeout(() => setBanner(null), 3000);
     } catch (err: any) {
-      setBanner({ type: 'error', message: 'Gagal menyimpan konfigurasi: ' + (err.response?.data?.error || err.message) });
+      setBanner({ type: 'error', message: 'Gagal menyimpan konfigurasi AI: ' + (err.response?.data?.error || err.message) });
     } finally {
       setSavingAi(false);
     }
@@ -200,72 +242,156 @@ export default function Settings() {
     try {
       await autoReplyService.deleteRule(id);
       setRules((prev) => prev.filter((r) => r.id !== id));
-      setBanner({ type: 'success', message: 'Aturan berhasil dihapus.' });
+      setBanner({ type: 'success', message: 'Aturan auto-reply berhasil dihapus.' });
       setTimeout(() => setBanner(null), 3000);
-    } catch (err) {
+    } catch (err: any) {
       setBanner({ type: 'error', message: 'Gagal menghapus aturan.' });
     }
   };
 
-  const handleSaveWebhook = (e: React.FormEvent) => {
-    e.preventDefault();
-    localStorage.setItem('wagtw_global_webhook', globalWebhook);
-    setBanner({ type: 'success', message: 'Global Webhook berhasil disimpan!' });
+  const handleSaveGlobalWebhook = () => {
+    localStorage.setItem('wagtw_global_webhook', globalWebhook.trim());
+    setBanner({ type: 'success', message: 'Global webhook berhasil disimpan!' });
     setTimeout(() => setBanner(null), 3000);
   };
 
-  const handleTestWebhook = async () => {
-    if (!globalWebhook) {
-      alert('Masukkan URL webhook terlebih dahulu.');
-      return;
-    }
+  const handleTestGlobalWebhook = async () => {
+    if (!globalWebhook.trim()) return;
     setWebhookTesting(true);
     setWebhookResult(null);
     try {
-      const res = await fetch(globalWebhook, {
+      const start = Date.now();
+      const res = await fetch(globalWebhook.trim(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          event: 'webhook.ping',
+          event: 'webhook_test',
           timestamp: new Date().toISOString(),
-          message: 'Ping test from WAGTW WhatsApp Gateway'
+          gateway: 'WAGTW-Pro',
+          data: { ping: 'pong' }
         })
       });
+      const latency = Date.now() - start;
       if (res.ok) {
-        setWebhookResult({ success: true, msg: `HTTP ${res.status}: Webhook terkirim & diterima dengan baik!` });
+        setWebhookResult({ success: true, msg: `Webhook Aktif! Response HTTP ${res.status} (${latency}ms)` });
       } else {
-        setWebhookResult({ success: false, msg: `HTTP ${res.status}: Server merespon status error.` });
+        setWebhookResult({ success: false, msg: `Server webhook merespon HTTP ${res.status}` });
       }
     } catch (err: any) {
-      setWebhookResult({ success: false, msg: 'Koneksi gagal: ' + err.message });
+      setWebhookResult({ success: false, msg: `Gagal menjangkau webhook: ${err.message}` });
     } finally {
       setWebhookTesting(false);
+    }
+  };
+
+  const handleChangeMyPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!myNewPassword || myNewPassword.length < 6) {
+      setBanner({ type: 'error', message: 'Password baru minimal 6 karakter.' });
+      return;
+    }
+    if (myNewPassword !== myConfirmPassword) {
+      setBanner({ type: 'error', message: 'Konfirmasi password tidak cocok dengan password baru.' });
+      return;
+    }
+    setChangingMyPassword(true);
+    try {
+      await authService.changePassword({
+        currentPassword: myCurrentPassword || undefined,
+        newPassword: myNewPassword
+      });
+      setBanner({ type: 'success', message: 'Password Anda berhasil diubah! Gunakan password baru saat login berikutnya.' });
+      setMyCurrentPassword('');
+      setMyNewPassword('');
+      setMyConfirmPassword('');
+      setTimeout(() => setBanner(null), 4000);
+    } catch (err: any) {
+      setBanner({ type: 'error', message: 'Gagal mengubah password: ' + (err.response?.data?.error || err.message) });
+    } finally {
+      setChangingMyPassword(false);
+    }
+  };
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUserEmail.trim() || !newUserPassword) {
+      setBanner({ type: 'error', message: 'Email dan password wajib diisi.' });
+      return;
+    }
+    if (newUserPassword.length < 6) {
+      setBanner({ type: 'error', message: 'Password minimal 6 karakter.' });
+      return;
+    }
+    setAddingUser(true);
+    try {
+      await authService.createUser({
+        name: newUserName.trim() || undefined,
+        email: newUserEmail.trim(),
+        password: newUserPassword
+      });
+      setBanner({ type: 'success', message: `Pengguna baru "${newUserEmail}" berhasil dibuat dan siap login!` });
+      setShowAddUserModal(false);
+      setNewUserName('');
+      setNewUserEmail('');
+      setNewUserPassword('');
+      fetchUsersList();
+      setTimeout(() => setBanner(null), 4000);
+    } catch (err: any) {
+      setBanner({ type: 'error', message: 'Gagal menambah pengguna: ' + (err.response?.data?.error || err.message) });
+    } finally {
+      setAddingUser(false);
+    }
+  };
+
+  const handleDeleteUser = async (userToDelete: any) => {
+    if (!confirm(`Hapus pengguna "${userToDelete.email}"?\n\nPengguna ini tidak akan bisa login lagi.`)) {
+      return;
+    }
+    try {
+      await authService.deleteUser(userToDelete.id);
+      setBanner({ type: 'success', message: `Pengguna "${userToDelete.email}" berhasil dihapus.` });
+      fetchUsersList();
+      setTimeout(() => setBanner(null), 3000);
+    } catch (err: any) {
+      setBanner({ type: 'error', message: 'Gagal menghapus pengguna: ' + (err.response?.data?.error || err.message) });
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resettingUser || !resetNewPassword || resetNewPassword.length < 6) {
+      setBanner({ type: 'error', message: 'Password baru minimal 6 karakter.' });
+      return;
+    }
+    setResettingPassword(true);
+    try {
+      await authService.resetUserPassword(resettingUser.id, resetNewPassword);
+      setBanner({ type: 'success', message: `Password untuk "${resettingUser.email}" berhasil diperbarui!` });
+      setResettingUser(null);
+      setResetNewPassword('');
+      setTimeout(() => setBanner(null), 4000);
+    } catch (err: any) {
+      setBanner({ type: 'error', message: 'Gagal mereset password: ' + (err.response?.data?.error || err.message) });
+    } finally {
+      setResettingPassword(false);
     }
   };
 
   const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Jakarta';
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto pb-16">
+    <div className="space-y-5 max-w-5xl mx-auto pb-12">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-200">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-2 border-b border-slate-200">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            Pengaturan Sistem & Automasi
-          </h1>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">Pengaturan Gateway & Sistem</h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Konfigurasi Auto-Reply pintar, engine 9routes AI, global webhook, dan arsitektur gateway WhatsApp.
+            Kelola konfigurasi Auto-Reply, Asisten 9routes AI, Webhook Global, serta Manajemen Akun & Password.
           </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-            Zona Waktu: <strong className="font-mono text-emerald-700">{userTimeZone}</strong>
-          </span>
         </div>
       </div>
 
-      {/* Banner Notification */}
+      {/* Banner Notifikasi */}
       {banner && (
         <div
           className={`p-3.5 rounded-xl text-xs font-semibold flex items-center justify-between border ${
@@ -325,6 +451,21 @@ export default function Settings() {
         </button>
 
         <button
+          onClick={() => {
+            setActiveTab('users');
+            fetchUsersList();
+          }}
+          className={`px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+            activeTab === 'users'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          <span>Pengguna & Keamanan ({users.length || 1})</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('system')}
           className={`px-3.5 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
             activeTab === 'system'
@@ -359,204 +500,180 @@ export default function Settings() {
           </div>
 
           {loading ? (
-            <div className="bg-white p-12 text-center rounded-xl border border-slate-200 text-slate-400 text-xs">
-              Memuat aturan auto-reply...
+            <div className="bg-white rounded-xl p-8 border border-slate-200 text-center text-xs text-slate-500">
+              Memuat data aturan auto-reply...
             </div>
           ) : rules.length === 0 ? (
-            <div className="bg-white p-12 text-center rounded-xl border border-slate-200 shadow-xs space-y-3">
-              <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto text-emerald-600">
-                <Zap className="w-6 h-6" />
-              </div>
-              <h3 className="text-sm font-bold text-slate-800">Belum Ada Aturan Auto-Reply</h3>
-              <p className="text-xs text-slate-500 max-w-md mx-auto">
-                Buat aturan kata kunci seperti "halo", "order", atau "harga", lalu tentukan balasan otomatis atau aktifkan 9routes AI.
+            <div className="bg-white rounded-xl p-8 border border-slate-200 text-center">
+              <Zap className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+              <h4 className="text-sm font-bold text-slate-700">Belum Ada Aturan Auto-Reply</h4>
+              <p className="text-xs text-slate-400 mt-1 mb-4">
+                Buat aturan kata kunci pertama Anda agar pesan pelanggan dibalas secara instan.
               </p>
               <button
                 onClick={openCreateModal}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Buat Rule Pertama Sekarang</span>
+                <span>Buat Aturan Sekarang</span>
               </button>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {rules.map((rule) => {
-                const isActive = rule.isActive !== false;
-                return (
-                  <div
-                    key={rule.id}
-                    className={`bg-white rounded-xl border p-4.5 shadow-xs transition-all flex flex-col justify-between ${
-                      isActive ? 'border-slate-200 hover:border-slate-300' : 'border-slate-200 bg-slate-50/60 opacity-75'
-                    }`}
-                  >
-                    <div>
-                      {/* Top Bar: Badges & Toggle */}
-                      <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {rule.isAi ? (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
-                              <Sparkles className="w-3 h-3 text-emerald-600" />
-                              9routes AI Assistant
-                            </span>
-                          ) : (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1">
-                              <MessageSquare className="w-3 h-3 text-blue-600" />
-                              Teks Tetap
-                            </span>
-                          )}
-
-                          <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
-                            ⏳ Jeda {rule.cooldown || 30}s
+              {rules.map((rule) => (
+                <div
+                  key={rule.id}
+                  className={`bg-white rounded-xl border p-4 shadow-xs transition-all flex flex-col justify-between ${
+                    rule.isActive !== false ? 'border-slate-200' : 'border-slate-200/60 opacity-60 bg-slate-50/50'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        {rule.isAi ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200/60">
+                            <Sparkles className="w-3 h-3 text-indigo-600" />
+                            <span>9routes AI Auto-Reply</span>
                           </span>
-                        </div>
-
-                        {/* Active Switch */}
-                        <button
-                          onClick={() => handleToggleActive(rule)}
-                          className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors cursor-pointer ${
-                            isActive
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-slate-200 text-slate-600'
-                          }`}
-                          title="Klik untuk ubah status aktif"
-                        >
-                          {isActive ? 'Aktif' : 'Non-Aktif'}
-                        </button>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                            <MessageSquare className="w-3 h-3 text-emerald-600" />
+                            <span>Teks Template</span>
+                          </span>
+                        )}
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          Delay: {rule.cooldown || 30}s
+                        </span>
                       </div>
 
-                      {/* Keyword Title */}
-                      <div className="mt-3">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                          Pemicu (Keyword)
-                        </span>
-                        <div className="text-sm font-bold text-slate-900 mt-0.5">
-                          {rule.keyword ? (
-                            <code className="text-xs bg-slate-100 text-slate-800 px-2 py-0.5 rounded font-mono">
-                              "{rule.keyword}"
-                            </code>
-                          ) : (
-                            <span className="text-xs italic text-emerald-700 font-semibold">
-                              (Semua Pesan Masuk / 9routes Fallback)
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                      <button
+                        onClick={() => handleToggleActive(rule)}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border cursor-pointer ${
+                          rule.isActive !== false
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-slate-100 text-slate-500 border-slate-200'
+                        }`}
+                      >
+                        {rule.isActive !== false ? '● Aktif' : '○ Jeda'}
+                      </button>
+                    </div>
 
-                      {/* Response Body */}
-                      <div className="mt-2.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                          Balasan
-                        </span>
-                        <p className="text-xs text-slate-700 mt-1 bg-slate-50 p-2.5 rounded-lg border border-slate-100 line-clamp-3 leading-relaxed">
-                          {rule.isAi
-                            ? 'Dibalas otomatis oleh 9routes AI berdasarkan konteks chat dan persona sistem toko Anda.'
-                            : rule.response || '—'}
-                        </p>
+                    <div className="mb-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Kata Kunci:</span>
+                      <div className="font-mono text-xs font-bold text-slate-800 bg-slate-50 px-2 py-1 rounded border border-slate-100 mt-0.5 inline-block">
+                        {rule.keyword ? `"${rule.keyword}"` : <em className="text-slate-400">Semua pesan (Fallback AI)</em>}
                       </div>
                     </div>
 
-                    {/* Bottom Action Footer */}
-                    <div className="flex items-center justify-between pt-3 mt-3 border-t border-slate-100 text-[10px] text-slate-400">
-                      <span>Dibuat: {new Date(rule.createdAt).toLocaleDateString('id-ID')}</span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => openEditModal(rule)}
-                          className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-slate-100 rounded transition-colors cursor-pointer"
-                          title="Edit Aturan"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(rule.id)}
-                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
-                          title="Hapus Aturan"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Balasan:</span>
+                      <p className="text-xs text-slate-600 line-clamp-3 bg-slate-50/50 p-2 rounded border border-slate-100/60 mt-0.5 whitespace-pre-wrap">
+                        {rule.isAi ? (
+                          <span className="text-indigo-600 font-medium">
+                            Dijawab otomatis oleh 9routes AI ({aiModel}) berdasarkan instruksi sistem.
+                          </span>
+                        ) : (
+                          rule.response
+                        )}
+                      </p>
                     </div>
                   </div>
-                );
-              })}
+
+                  <div className="flex items-center justify-end gap-2 pt-3 mt-3 border-t border-slate-100">
+                    <button
+                      onClick={() => openEditModal(rule)}
+                      className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </button>
+                    <button
+                      onClick={() => handleDelete(rule.id)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Hapus</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
       )}
 
-      {/* TAB 2: 9ROUTES AI SETTINGS */}
+      {/* TAB 2: ASISTEN 9ROUTES AI */}
       {activeTab === 'ai' && (
-        <form onSubmit={handleSaveAiSettings} className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-5">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <Cpu className="w-4 h-4 text-emerald-600" />
-                Konfigurasi 9routes AI Engine
-              </h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Menggunakan gateway 9routes AI untuk membalas chat WhatsApp pelanggan secara natural & otomatis 24/7.
-              </p>
-            </div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <span className="text-xs font-bold text-slate-700">Status AI:</span>
-              <input
-                type="checkbox"
-                checked={aiEnabled}
-                onChange={(e) => setAiEnabled(e.target.checked)}
-                className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500"
-              />
-              <span className={`text-xs font-bold px-2 py-0.5 rounded ${aiEnabled ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                {aiEnabled ? 'Aktif' : 'Non-Aktif'}
-              </span>
-            </label>
-          </div>
+        <div className="space-y-4">
+          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Bot className="w-4 h-4 text-emerald-600" />
+                  <span>Pengaturan Asisten 9routes AI</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Gunakan server AI lokal/eksternal 9routes yang mendukung chat completions format OpenAI.
+                </p>
+              </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
-                9routes Base URL
-              </label>
-              <input
-                type="text"
-                required
-                value={aiBaseUrl}
-                onChange={(e) => setAiBaseUrl(e.target.value)}
-                placeholder="http://103.89.2.102:20128/v1"
-                className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              />
-              <p className="text-[11px] text-slate-400 mt-1">Endpoint API kompatibel OpenAI milik server 9routes.</p>
+              <button
+                type="button"
+                onClick={() => setAiEnabled(!aiEnabled)}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  aiEnabled
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                    : 'bg-slate-100 text-slate-500 border-slate-200'
+                }`}
+              >
+                <span className={`w-2 h-2 rounded-full ${aiEnabled ? 'bg-emerald-500' : 'bg-slate-400'}`}></span>
+                <span>{aiEnabled ? '9routes AI: AKTIF' : '9routes AI: NON-AKTIF'}</span>
+              </button>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
-                API Key 9routes
-              </label>
-              <input
-                type="password"
-                required
-                value={aiApiKey}
-                onChange={(e) => setAiApiKey(e.target.value)}
-                placeholder="sk-xxxxxxxxxxxxxxxx"
-                className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-              />
-              <p className="text-[11px] text-slate-400 mt-1">Kunci autentikasi Bearer Token 9routes.</p>
-            </div>
-          </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                  Base URL Server 9routes
+                </label>
+                <input
+                  type="text"
+                  value={aiBaseUrl}
+                  onChange={(e) => setAiBaseUrl(e.target.value)}
+                  placeholder="http://103.89.2.102:20128/v1"
+                  className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Endpoint OpenAI-compatible endpoint v1.</p>
+              </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                  API Key / Token Otorisasi
+                </label>
+                <input
+                  type="password"
+                  value={aiApiKey}
+                  onChange={(e) => setAiApiKey(e.target.value)}
+                  placeholder="sk-..."
+                  className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Token rahasia akses ke cluster 9routes AI.</p>
+              </div>
+            </div>
+
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Model 9routes AI
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Model AI yang Digunakan
                 </label>
                 <button
                   type="button"
                   onClick={handleFetch9routesModels}
                   disabled={fetchingModels}
-                  className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1 cursor-pointer"
+                  className="text-[11px] text-emerald-600 hover:text-emerald-700 font-bold inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3 h-3 ${fetchingModels ? 'animate-spin' : ''}`} />
-                  <span>{fetchingModels ? 'Memindai...' : 'Pindai Model 9routes'}</span>
+                  <span>Scan Model dari Server 9routes</span>
                 </button>
               </div>
 
@@ -564,10 +681,12 @@ export default function Settings() {
                 <select
                   value={aiModel}
                   onChange={(e) => setAiModel(e.target.value)}
-                  className="w-full px-3 py-2 text-xs font-mono font-semibold bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 >
                   {availableModels.map((m) => (
-                    <option key={m} value={m}>{m}</option>
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
                   ))}
                 </select>
               ) : (
@@ -575,168 +694,340 @@ export default function Settings() {
                   type="text"
                   value={aiModel}
                   onChange={(e) => setAiModel(e.target.value)}
-                  placeholder="mistral/mistral-large-latest"
+                  placeholder="misal: mistral/mistral-large-latest atau ag/gemini-3.8-flash-high"
                   className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
               )}
-              <p className="text-[11px] text-slate-400 mt-1">
-                Rekomendasi: <code>mistral/mistral-large-latest</code> atau klik tombol 'Pindai Model'.
+              <p className="text-[10px] text-slate-400 mt-1">
+                Pilih atau masukkan nama model LLM yang ingin memproses respon pesan WhatsApp.
               </p>
             </div>
 
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
-                Jeda Respon AI (Cooldown Anti-Spam)
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                Instruksi Sistem (System Prompt / Persona AI)
               </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={5}
-                  max={600}
-                  value={aiCooldown}
-                  onChange={(e) => setAiCooldown(Number(e.target.value))}
-                  className="w-full px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                />
-                <span className="text-xs font-semibold text-slate-500 shrink-0">Detik</span>
-              </div>
-              <p className="text-[11px] text-slate-400 mt-1">
-                Mencegah bot mengirim respon ganda jika kontak mengirim chat bertubi-tubi.
+              <textarea
+                rows={4}
+                value={aiSystemPrompt}
+                onChange={(e) => setAiSystemPrompt(e.target.value)}
+                placeholder="Anda adalah customer service asisten WhatsApp yang ramah, sopan, dan sigap membantu..."
+                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none leading-relaxed"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">
+                Tentukan gaya bahasa, informasi produk/layanan toko, serta batasan jawaban untuk AI.
               </p>
             </div>
-          </div>
 
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
-              Instruksi Sistem / Persona CS (System Prompt)
-            </label>
-            <textarea
-              rows={4}
-              value={aiSystemPrompt}
-              onChange={(e) => setAiSystemPrompt(e.target.value)}
-              placeholder="Jelaskan peran AI, produk/jasa, jam operasional, dan gaya bahasa..."
-              className="w-full px-3 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none leading-relaxed"
-            />
-            <p className="text-[11px] text-slate-400 mt-1">
-              Tips: Tuliskan informasi harga barang, nomor rekening, alamat toko, atau instruksi FAQ agar 9routes AI menjawab akurat.
-            </p>
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={handleSaveAiConfig}
+                disabled={savingAi}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{savingAi ? 'Menyimpan...' : 'Simpan Pengaturan 9routes AI'}</span>
+              </button>
+            </div>
           </div>
-
-          <div className="flex justify-end pt-2">
-            <button
-              type="submit"
-              disabled={savingAi}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>{savingAi ? 'Menyimpan...' : 'Simpan Konfigurasi 9routes AI'}</span>
-            </button>
-          </div>
-        </form>
+        </div>
       )}
 
       {/* TAB 3: GLOBAL WEBHOOK */}
       {activeTab === 'webhook' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-5">
-          <div className="pb-3 border-b border-slate-100">
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <Globe className="w-4 h-4 text-emerald-600" />
-              Global Webhook Event Forwarding
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Kirimkan seluruh event WhatsApp masuk (pesan diterima, status pesan, pergantian sesi) ke server atau API Anda secara real-time.
-            </p>
-          </div>
-
-          <form onSubmit={handleSaveWebhook} className="space-y-4">
+        <div className="space-y-4">
+          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
-                URL Global Webhook (POST HTTP/HTTPS)
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Globe className="w-4 h-4 text-emerald-600" />
+                <span>Global Webhook Event Forwarder</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Setiap pesan WhatsApp masuk (inbound message) dan update status dapat diteruskan secara otomatis ke URL server backend Anda sendiri.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                URL Endpoint Webhook (POST Method)
               </label>
               <div className="flex gap-2">
                 <input
                   type="url"
                   value={globalWebhook}
                   onChange={(e) => setGlobalWebhook(e.target.value)}
-                  placeholder="https://aplikasi-anda.com/api/webhook/whatsapp"
+                  placeholder="https://aplikasi-anda.com/api/wa-webhook"
                   className="flex-1 px-3 py-2 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
                 <button
                   type="button"
-                  onClick={handleTestWebhook}
-                  disabled={webhookTesting || !globalWebhook}
-                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  onClick={handleTestGlobalWebhook}
+                  disabled={webhookTesting || !globalWebhook.trim()}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 shrink-0"
                 >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>{webhookTesting ? 'Menguji...' : 'Tes Ping'}</span>
+                  <Send className="w-3 h-3" />
+                  <span>{webhookTesting ? 'Menguji...' : 'Uji Webhook'}</span>
                 </button>
               </div>
+              <p className="text-[10px] text-slate-400 mt-1">
+                Sistem akan mengirimkan request HTTP POST dengan payload JSON berisi nomor pengirim, teks pesan, dan ID device.
+              </p>
             </div>
 
             {webhookResult && (
               <div
-                className={`p-3 rounded-lg text-xs font-semibold flex items-center gap-2 border ${
+                className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 border ${
                   webhookResult.success
                     ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                     : 'bg-rose-50 text-rose-800 border-rose-200'
                 }`}
               >
-                {webhookResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <AlertCircle className="w-4 h-4 text-rose-600" />}
+                {webhookResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                )}
                 <span>{webhookResult.msg}</span>
               </div>
             )}
 
-            <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-600 space-y-1.5">
-              <p className="font-bold text-slate-800 uppercase tracking-wider text-[10px]">Event Payload yang Diteruskan:</p>
-              <ul className="list-disc pl-4 space-y-0.5 font-mono text-[10px] text-slate-500">
-                <li><code>message.received</code> — Saat ada kontak/pelanggan mengirim pesan teks atau media</li>
-                <li><code>message.sent</code> — Saat pesan berhasil diproses dan dikirim via worker</li>
-                <li><code>device.status</code> — Saat koneksi device berubah (CONNECTED / QR_READY / DISCONNECTED)</li>
-              </ul>
-            </div>
-
-            <div className="flex justify-end pt-2">
+            <div className="pt-2 flex justify-end">
               <button
-                type="submit"
+                type="button"
+                onClick={handleSaveGlobalWebhook}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 <span>Simpan Global Webhook</span>
               </button>
             </div>
-          </form>
+          </div>
         </div>
       )}
 
-      {/* TAB 4: SYSTEM & GATEWAY STATUS */}
-      {activeTab === 'system' && (
-        <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-6">
-          <div className="pb-3 border-b border-slate-100">
-            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-              <Server className="w-4 h-4 text-emerald-600" />
-              Status Sistem & Arsitektur Gateway
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Informasi internal runtime, service port, dan environment cluster WAGTW.
-            </p>
+      {/* TAB 4: PENGGUNA & KEAMANAN (USER MANAGEMENT & GANTI PASSWORD) */}
+      {activeTab === 'users' && (
+        <div className="space-y-5">
+          {/* Card 1: Ganti Password Akun Saya */}
+          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                <KeyRound className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Ubah Password Akun Saya</h3>
+                <p className="text-xs text-slate-500">
+                  Ganti password login untuk akun Anda yang sedang aktif ({currentUser.email || 'Akun Anda'}).
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleChangeMyPassword} className="space-y-4 max-w-xl">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Password Saat Ini (Opsional jika baru)
+                </label>
+                <input
+                  type="password"
+                  value={myCurrentPassword}
+                  onChange={(e) => setMyCurrentPassword(e.target.value)}
+                  placeholder="Masukkan password lama Anda"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                    Password Baru (Min 6 Karakter) *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={myNewPassword}
+                    onChange={(e) => setMyNewPassword(e.target.value)}
+                    placeholder="Minimal 6 karakter"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                    Ulangi Password Baru *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={myConfirmPassword}
+                    onChange={(e) => setMyConfirmPassword(e.target.value)}
+                    placeholder="Ketik ulang password baru"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-1">
+                <button
+                  type="submit"
+                  disabled={changingMyPassword || !myNewPassword}
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {changingMyPassword ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+                  <span>Simpan Password Baru</span>
+                </button>
+              </div>
+            </form>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* Card 2: Manajemen Akun Pegawai / Pengguna Lain */}
+          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                  <Users className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Daftar Akun Pengguna / Pegawai</h3>
+                  <p className="text-xs text-slate-500">
+                    Tambah atau kelola akun staf/pegawai yang memiliki akses setara admin ke gateway ini.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAddUserModal(true)}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 shrink-0"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>Tambah Pengguna Baru</span>
+              </button>
+            </div>
+
+            {loadingUsers ? (
+              <div className="text-center py-8 text-xs text-slate-500">
+                Memuat daftar pengguna...
+              </div>
+            ) : users.length === 0 ? (
+              <div className="text-center py-8 text-xs text-slate-500">
+                Belum ada data pengguna.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200/80 text-[11px] font-bold uppercase tracking-wider text-slate-400 bg-slate-50/50">
+                      <th className="py-2.5 px-3">Pengguna</th>
+                      <th className="py-2.5 px-3">Email Login</th>
+                      <th className="py-2.5 px-3">Role / Hak Akses</th>
+                      <th className="py-2.5 px-3">Terdaftar Sejak</th>
+                      <th className="py-2.5 px-3 text-right">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {users.map((u) => {
+                      const isMe = currentUser.id === u.id || currentUser.email === u.email;
+                      return (
+                        <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="py-3 px-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-7 h-7 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-[11px]">
+                                {(u.name || u.email).charAt(0).toUpperCase()}
+                              </div>
+                              <div>
+                                <p className="font-bold text-slate-800">
+                                  {u.name || 'Pengguna'} {isMe && <span className="text-[10px] text-emerald-600 font-semibold">(Anda)</span>}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 font-mono text-slate-600">
+                            {u.email}
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200/60">
+                              <Shield className="w-2.5 h-2.5" />
+                              <span>Administrator</span>
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-slate-400">
+                            {new Date(u.createdAt).toLocaleDateString('id-ID', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric'
+                            })}
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setResettingUser(u);
+                                  setResetNewPassword('');
+                                }}
+                                className="px-2 py-1 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                                title="Ubah Password"
+                              >
+                                <KeyRound className="w-3 h-3 text-slate-500" />
+                                <span>Reset Password</span>
+                              </button>
+
+                              {!isMe && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteUser(u)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded cursor-pointer"
+                                  title="Hapus Pengguna"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: STATUS GATEWAY */}
+      {activeTab === 'system' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
             <div className="p-4 rounded-xl border border-slate-100 bg-slate-50 space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">API Server</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Node API Engine</span>
               <p className="text-sm font-mono font-bold text-slate-900">Port 4010</p>
-              <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">Active / Express REST</span>
+              <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">Ready & Healthy</span>
             </div>
 
             <div className="p-4 rounded-xl border border-slate-100 bg-slate-50 space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Worker Node</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Worker Chromium</span>
               <p className="text-sm font-mono font-bold text-slate-900">Port 4011</p>
-              <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">WPPConnect Headless</span>
+              <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">Puppeteer Active</span>
             </div>
 
             <div className="p-4 rounded-xl border border-slate-100 bg-slate-50 space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">AI Gateway</span>
-              <p className="text-sm font-mono font-bold text-emerald-800">9routes AI</p>
-              <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">Active / Mistral & LLM</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Admin Dashboard</span>
+              <p className="text-sm font-mono font-bold text-slate-900">Port 5174</p>
+              <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">Vite React SPA</span>
+            </div>
+
+            <div className="p-4 rounded-xl border border-slate-100 bg-slate-50 space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">AI LLM Provider</span>
+              <p className="text-sm font-mono font-bold text-slate-900">9routes v1</p>
+              <span className="text-[10px] text-indigo-700 font-semibold bg-indigo-50 px-1.5 py-0.5 rounded">OpenAI Compatible</span>
+            </div>
+
+            <div className="p-4 rounded-xl border border-slate-100 bg-slate-50 space-y-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Anti-Bot Fingerprint</span>
+              <p className="text-sm font-mono font-bold text-slate-900">Intel Iris Xe</p>
+              <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">WebGL Spoof Active</span>
             </div>
 
             <div className="p-4 rounded-xl border border-slate-100 bg-slate-50 space-y-1">
@@ -760,7 +1051,7 @@ export default function Settings() {
         </div>
       )}
 
-      {/* POPUP MODAL: TAMBAH / EDIT RULE AUTO-REPLY */}
+      {/* POPUP MODAL 1: TAMBAH / EDIT RULE AUTO-REPLY */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden animate-in zoom-in-95 duration-200">
@@ -922,6 +1213,151 @@ export default function Settings() {
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>{saving ? 'Menyimpan...' : 'Simpan Aturan'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* POPUP MODAL 2: TAMBAH USER / PEGAWAI BARU */}
+      {showAddUserModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                  <UserPlus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Tambah Akun Pegawai Baru</h3>
+                  <p className="text-[11px] text-slate-500">Berikan akses pengelolaan gateway WhatsApp.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAddUserModal(false)}
+                className="text-slate-400 hover:text-slate-700 text-sm font-bold p-1 rounded-md cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateUser} className="p-6 space-y-4">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Nama Lengkap / Jabatan
+                </label>
+                <input
+                  type="text"
+                  value={newUserName}
+                  onChange={(e) => setNewUserName(e.target.value)}
+                  placeholder="Contoh: Budi Santoso (Customer Service)"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Email Login *
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={newUserEmail}
+                  onChange={(e) => setNewUserEmail(e.target.value)}
+                  placeholder="pegawai@perusahaan.com"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Password Login (Min 6 Karakter) *
+                </label>
+                <input
+                  type="password"
+                  required
+                  value={newUserPassword}
+                  onChange={(e) => setNewUserPassword(e.target.value)}
+                  placeholder="Minimal 6 karakter"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddUserModal(false)}
+                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingUser}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  {addingUser ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserPlus className="w-3.5 h-3.5" />}
+                  <span>Tambah Pengguna</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* POPUP MODAL 3: RESET PASSWORD PENGGUNA */}
+      {resettingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                  <KeyRound className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Reset Password Pengguna</h3>
+                  <p className="text-[11px] text-slate-500 font-mono">{resettingUser.email}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setResettingUser(null)}
+                className="text-slate-400 hover:text-slate-700 text-sm font-bold p-1 rounded-md cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleResetPassword} className="p-6 space-y-4">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                  Password Baru Pengguna (Min 6 Karakter) *
+                </label>
+                <input
+                  type="password"
+                  required
+                  value={resetNewPassword}
+                  onChange={(e) => setResetNewPassword(e.target.value)}
+                  placeholder="Ketik password baru"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setResettingUser(null)}
+                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={resettingPassword}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  {resettingPassword ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+                  <span>Perbarui Password</span>
                 </button>
               </div>
             </form>

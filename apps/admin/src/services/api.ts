@@ -87,5 +87,14 @@ export const warmupService = {
   triggerManual: () => api.post('/warmup/trigger'),
 };
 
+export const authService = {
+  getProfile: () => api.get('/auth/me'),
+  changePassword: (data: { currentPassword?: string; newPassword: string }) => api.post('/auth/change-password', data),
+  getUsers: () => api.get('/auth/users'),
+  createUser: (data: { name?: string; email: string; password: string }) => api.post('/auth/users', data),
+  deleteUser: (id: string) => api.delete(`/auth/users/${id}`),
+  resetUserPassword: (id: string, newPassword: string) => api.patch(`/auth/users/${id}/password`, { newPassword }),
+};
+
 export default api;
 
