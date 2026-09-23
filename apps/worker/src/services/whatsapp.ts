@@ -399,9 +399,30 @@ class WhatsAppManager {
   async logout(deviceId: string) {
     const client = this.sessions.get(deviceId);
     if (client) {
-      await client.logout();
+      try {
+        await client.logout();
+      } catch (err: any) {
+        console.warn(`[Logout] client.logout error for ${deviceId}:`, err.message);
+      }
+      try {
+        await client.close();
+      } catch (err: any) {
+        console.warn(`[Logout] client.close error for ${deviceId}:`, err.message);
+      }
       this.sessions.delete(deviceId);
       await this.updateDeviceStatus(deviceId, 'DISCONNECTED');
+    }
+
+    // Clean up session token directory on disk
+    try {
+      const safeSession = `dev_${deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+      const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
+      if (fs.existsSync(tokenDir)) {
+        fs.rmSync(tokenDir, { recursive: true, force: true });
+        console.log(`[Logout] Token directory deleted for ${deviceId}: ${tokenDir}`);
+      }
+    } catch (cleanErr: any) {
+      console.warn(`[Logout] Failed to delete token directory for ${deviceId}:`, cleanErr.message);
     }
   }
 }
