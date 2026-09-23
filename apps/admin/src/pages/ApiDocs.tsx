@@ -27,7 +27,9 @@ import {
   Users,
   Search,
   Layers,
-  Inbox
+  Inbox,
+  Menu,
+  X
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -710,6 +712,10 @@ export default function ApiDocs({ isPublic = false }: ApiDocsProps) {
   });
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [activeLang, setActiveLang] = useState<Record<string, 'curl' | 'php' | 'laravel' | 'nodejs' | 'python'>>({});
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
+  const [activeEndpointId, setActiveEndpointId] = useState<string | null>('msg-send');
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   
   // Try-It-Out State per endpoint
   const [payloads, setPayloads] = useState<Record<string, string>>({});
@@ -1010,17 +1016,64 @@ async def handle_whatsapp_webhook(request: Request):
     return '';
   };
 
+  const getCategoryIcon = (category: string) => {
+    if (category.includes('Message')) return <MessageSquare className="w-4 h-4 text-emerald-600" />;
+    if (category.includes('Device')) return <Smartphone className="w-4 h-4 text-blue-600" />;
+    if (category.includes('Auto-Reply')) return <Sparkles className="w-4 h-4 text-purple-600" />;
+    if (category.includes('Warmup')) return <Zap className="w-4 h-4 text-amber-600" />;
+    if (category.includes('Broadcast')) return <Send className="w-4 h-4 text-cyan-600" />;
+    if (category.includes('Media') || category.includes('Inbox')) return <Layers className="w-4 h-4 text-indigo-600" />;
+    if (category.includes('Kontak') || category.includes('Phonebook')) return <Users className="w-4 h-4 text-teal-600" />;
+    if (category.includes('Autentikasi')) return <KeyRound className="w-4 h-4 text-rose-600" />;
+    return <BookOpen className="w-4 h-4 text-slate-600" />;
+  };
+
+  const scrollToEndpoint = (id: string, category: string) => {
+    setActiveEndpointId(id);
+    if (selectedCategory !== 'ALL' && selectedCategory !== category) {
+      setSelectedCategory('ALL');
+    }
+    setExpandedEndpoints((prev) => ({ ...prev, [id]: true }));
+    setMobileSidebarOpen(false);
+
+    setTimeout(() => {
+      const el = document.getElementById(`endpoint-${id}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 120);
+  };
+
   const categories = Array.from(new Set(ENDPOINTS.map((e) => e.category)));
-  const filteredEndpoints = selectedCategory === 'ALL'
-    ? ENDPOINTS
-    : ENDPOINTS.filter((e) => e.category === selectedCategory);
+
+  const filteredEndpoints = ENDPOINTS.filter((ep) => {
+    const matchCat = selectedCategory === 'ALL' || ep.category === selectedCategory;
+    if (!matchCat) return false;
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      ep.path.toLowerCase().includes(q) ||
+      ep.summary.toLowerCase().includes(q) ||
+      ep.description.toLowerCase().includes(q) ||
+      ep.category.toLowerCase().includes(q) ||
+      ep.method.toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div className="min-h-screen bg-slate-50/60 font-sans pb-24">
       {/* Top Header Navbar */}
-      <header className="bg-white border-b border-slate-200 px-6 py-3.5 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
+      <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 sticky top-0 z-30 shadow-xs">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+              className="lg:hidden p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 border border-slate-200 cursor-pointer"
+              title="Toggle Menu Sidebar"
+            >
+              {mobileSidebarOpen ? <X className="w-5 h-5 text-slate-700" /> : <Menu className="w-5 h-5 text-slate-700" />}
+            </button>
             <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-bold text-xs shadow-xs">
               W
             </div>
@@ -1031,26 +1084,202 @@ async def handle_whatsapp_webhook(request: Request):
                   v1.2 OAS Complete
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">Enterprise WhatsApp REST API dengan Auto-Rotate, Failover, & Webhook Engine</p>
+              <p className="text-[11px] text-slate-400 hidden sm:block">Enterprise WhatsApp REST API dengan Auto-Rotate, Failover, & Webhook Engine</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <a
               href="/"
               className="text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-800 transition-colors flex items-center gap-1.5 shadow-xs"
             >
-              <span>Kembali ke Dashboard</span>
+              <span>Dashboard</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </a>
           </div>
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="max-w-6xl mx-auto px-6 pt-6 space-y-6">
-        {/* API Authentication & Server Selector */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+      {/* Mobile Sidebar Backdrop */}
+      {mobileSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-40 lg:hidden"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
+
+      {/* Main 2-Column Responsive Layout */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6">
+        <div className="flex flex-col lg:flex-row gap-6 items-start">
+          
+          {/* Left Column: Dedicated Sticky Sidebar */}
+          <aside className={`
+            fixed inset-y-0 left-0 z-50 w-72 sm:w-80 bg-white border-r border-slate-200 p-4 transition-transform duration-300 lg:translate-x-0 lg:static lg:w-72 xl:w-80 lg:shrink-0 lg:rounded-2xl lg:border lg:shadow-xs lg:p-0 overflow-hidden
+            ${mobileSidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full lg:translate-x-0'}
+          `}>
+            <div className="lg:sticky lg:top-20 flex flex-col h-full lg:max-h-[calc(100vh-6rem)]">
+              {/* Sidebar Header with Search & Stats */}
+              <div className="p-3.5 border-b border-slate-100 space-y-3 bg-white">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <BookOpen className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Daftar Endpoint</span>
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono">
+                    {ENDPOINTS.length} Total
+                  </span>
+                </div>
+
+                {/* Search Box */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Cari endpoint atau path..."
+                    className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 top-2 text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Quick Shortcuts */}
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => {
+                      setSelectedCategory('ALL');
+                      setSearchQuery('');
+                    }}
+                    className={`flex-1 py-1 px-2 text-[11px] font-bold rounded-md transition-all text-center cursor-pointer ${
+                      selectedCategory === 'ALL' && !searchQuery
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    Semua ({ENDPOINTS.length})
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowWebhookGuide(true);
+                      setMobileSidebarOpen(false);
+                      const el = document.getElementById('webhook-guide-card');
+                      if (el) el.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                    className="py-1 px-2.5 text-[11px] font-bold rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all flex items-center gap-1 cursor-pointer border border-emerald-200/50"
+                  >
+                    <Globe className="w-3 h-3 text-emerald-600" />
+                    <span>Webhook</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Scrollable Categories & Endpoints List */}
+              <div className="flex-1 overflow-y-auto p-2 space-y-2 text-xs">
+                {categories.map((cat) => {
+                  const catEndpoints = ENDPOINTS.filter((e) => e.category === cat);
+                  const isCatSelected = selectedCategory === cat;
+                  const isCollapsed = collapsedCategories[cat];
+
+                  return (
+                    <div key={cat} className="space-y-1">
+                      {/* Category Header */}
+                      <div
+                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors text-left ${
+                          isCatSelected 
+                            ? 'bg-emerald-50 text-emerald-950 font-bold border border-emerald-200/80 shadow-xs' 
+                            : 'text-slate-700 hover:bg-slate-100 font-semibold'
+                        }`}
+                      >
+                        <div 
+                          className="flex items-center gap-2 flex-1 min-w-0"
+                          onClick={() => {
+                            if (selectedCategory === cat) {
+                              setSelectedCategory('ALL');
+                            } else {
+                              setSelectedCategory(cat);
+                            }
+                          }}
+                        >
+                          {getCategoryIcon(cat)}
+                          <span className="truncate text-xs">{cat}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-200/70 text-slate-600 font-mono">
+                            {catEndpoints.length}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCollapsedCategories((prev) => ({ ...prev, [cat]: !prev[cat] }));
+                            }}
+                            className="p-0.5 text-slate-400 hover:text-slate-700 cursor-pointer"
+                          >
+                            {isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Nested Endpoints under this category */}
+                      {!isCollapsed && (
+                        <div className="pl-3 pr-1 py-0.5 space-y-0.5 border-l-2 border-slate-100 ml-3">
+                          {catEndpoints.map((ep) => {
+                            const isEpActive = activeEndpointId === ep.id;
+                            const methodBadge =
+                              ep.method === 'POST' ? 'bg-emerald-100 text-emerald-700' :
+                              ep.method === 'GET' ? 'bg-blue-100 text-blue-700' :
+                              ep.method === 'PATCH' ? 'bg-amber-100 text-amber-700' :
+                              'bg-rose-100 text-rose-700';
+
+                            return (
+                              <button
+                                key={ep.id}
+                                onClick={() => scrollToEndpoint(ep.id, ep.category)}
+                                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] text-left transition-all cursor-pointer truncate ${
+                                  isEpActive
+                                    ? 'bg-slate-900 text-white font-bold shadow-xs'
+                                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                                }`}
+                              >
+                                <span className={`px-1 py-0.2 rounded text-[9px] font-mono font-black shrink-0 ${isEpActive ? 'bg-white/20 text-white' : methodBadge}`}>
+                                  {ep.method}
+                                </span>
+                                <span className="truncate font-mono">{ep.path}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Close Button for Mobile */}
+              {mobileSidebarOpen && (
+                <div className="p-3 border-t border-slate-100 lg:hidden">
+                  <button
+                    onClick={() => setMobileSidebarOpen(false)}
+                    className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold cursor-pointer"
+                  >
+                    Tutup Navigasi
+                  </button>
+                </div>
+              )}
+            </div>
+          </aside>
+
+          {/* Right Column: Main Content Details */}
+          <main className="flex-1 min-w-0 space-y-6 w-full">
+            {/* API Authentication & Server Selector */}
+            <div id="base-url-card" className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-slate-100">
             <div>
               <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -1245,44 +1474,66 @@ async def handle_whatsapp_webhook(request: Request):
           )}
         </div>
 
-        {/* Category Navigation Pills */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          <button
-            onClick={() => setSelectedCategory('ALL')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
-              selectedCategory === 'ALL'
-                ? 'bg-slate-900 text-white shadow-xs'
-                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-            }`}
-          >
-            Semua Endpoint ({ENDPOINTS.length})
-          </button>
-          {categories.map((cat) => (
+        {/* Filter Status Bar (when category or search is active) */}
+        {(selectedCategory !== 'ALL' || searchQuery) && (
+          <div className="flex items-center justify-between px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs shadow-xs">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-slate-500">Filter Aktif:</span>
+              {selectedCategory !== 'ALL' && (
+                <span className="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md flex items-center gap-1.5">
+                  {getCategoryIcon(selectedCategory)}
+                  <span>{selectedCategory}</span>
+                </span>
+              )}
+              {searchQuery && (
+                <span className="font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                  Keyword: "{searchQuery}"
+                </span>
+              )}
+            </div>
             <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                selectedCategory === cat
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-              }`}
+              onClick={() => {
+                setSelectedCategory('ALL');
+                setSearchQuery('');
+              }}
+              className="text-xs font-bold text-rose-600 hover:text-rose-700 cursor-pointer shrink-0"
             >
-              {cat}
+              Tampilkan Semua
             </button>
-          ))}
-        </div>
+          </div>
+        )}
+
+        {/* Empty search state */}
+        {filteredEndpoints.length === 0 && (
+          <div className="p-10 text-center bg-white rounded-2xl border border-slate-200 space-y-3">
+            <Search className="w-8 h-8 text-slate-300 mx-auto" />
+            <p className="text-sm font-bold text-slate-700">Tidak ada endpoint yang cocok dengan pencarian "{searchQuery}"</p>
+            <p className="text-xs text-slate-400">Coba gunakan kata kunci lain atau klik tombol di bawah untuk mereset filter.</p>
+            <button
+              onClick={() => {
+                setSelectedCategory('ALL');
+                setSearchQuery('');
+              }}
+              className="mt-2 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold cursor-pointer"
+            >
+              Reset ke Semua Endpoint
+            </button>
+          </div>
+        )}
 
         {/* Endpoints Accordion List */}
         <div className="space-y-6">
           {categories
             .filter((c) => selectedCategory === 'ALL' || selectedCategory === c)
             .map((cat) => {
-              const catEndpoints = ENDPOINTS.filter((e) => e.category === cat);
+              const catEndpoints = filteredEndpoints.filter((e) => e.category === cat);
+              if (catEndpoints.length === 0) return null;
               return (
-                <div key={cat} className="space-y-3">
+                <div key={cat} id={`category-${cat.toLowerCase().replace(/[^a-z0-9]/g, '-')}`} className="space-y-3 scroll-mt-20">
                   <div className="flex items-center gap-2 pb-1 border-b border-slate-200">
+                    {getCategoryIcon(cat)}
                     <h3 className="font-extrabold text-sm text-slate-900 uppercase tracking-wider">{cat}</h3>
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-700 font-mono">
                       {catEndpoints.length}
                     </span>
                   </div>
@@ -1314,7 +1565,8 @@ async def handle_whatsapp_webhook(request: Request):
                       return (
                         <div
                           key={ep.id}
-                          className={`rounded-xl border ${borderMethod} bg-white shadow-xs overflow-hidden transition-all`}
+                          id={`endpoint-${ep.id}`}
+                          className={`rounded-xl border ${borderMethod} bg-white shadow-xs overflow-hidden transition-all scroll-mt-20`}
                         >
                           {/* Accordion Bar */}
                           <div
@@ -1515,5 +1767,7 @@ async def handle_whatsapp_webhook(request: Request):
         </div>
       </main>
     </div>
+  </div>
+  </div>
   );
 }
