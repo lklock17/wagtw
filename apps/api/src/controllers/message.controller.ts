@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '@wagtw/database';
 import axios from 'axios';
+import { enqueueAgentMessage } from './agent.controller';
 
 const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4011';
 let rotationIndex = 0;
@@ -111,6 +112,45 @@ export const sendMessage = async (req: Request, res: Response) => {
   for (const device of candidateQueue) {
     attempts++;
     try {
+      let sessionInfo: any = null;
+      try {
+        if (device.sessionData) sessionInfo = JSON.parse(device.sessionData);
+      } catch (e) {}
+
+      // Handle Android Agent physical phone relay
+      if (sessionInfo?.type === 'ANDROID_AGENT') {
+        const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        enqueueAgentMessage(device.id, msgId, recipient, content || caption || '');
+
+        await prisma.messageLog.create({
+          data: {
+            deviceId: device.id,
+            clientId: (req as any).client?.id || null,
+            to: recipient,
+            body: content || caption || 'Media Message',
+            type: type as any,
+            status: 'PENDING'
+          }
+        });
+
+        return res.json({
+          success: true,
+          message: 'Pesan berhasil diantrekan ke HP Android Agent!',
+          data: {
+            recipient,
+            sentVia: {
+              deviceId: device.id,
+              deviceName: device.name,
+              phoneNumber: device.phoneNumber,
+              type: 'ANDROID_AGENT'
+            },
+            autoRotated: isRotationRequested,
+            failoverTriggered: attempts > 1,
+            attemptCount: attempts
+          }
+        });
+      }
+
       const response = await axios.post(`${WORKER_URL}/messages/send`, {
         deviceId: device.id,
         to: recipient,

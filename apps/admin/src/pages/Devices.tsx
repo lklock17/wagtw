@@ -350,6 +350,22 @@ export default function Devices() {
             const isConnected = device.status === 'CONNECTED';
             const isQR = device.status === 'QR_READY';
             const isConnecting = device.status === 'CONNECTING' || connectingId === device.id;
+            const isAndroidAgent = (() => {
+              try {
+                const s = JSON.parse(device.sessionData || '{}');
+                return s.type === 'ANDROID_AGENT';
+              } catch (e) {
+                return false;
+              }
+            })();
+            const agentModel = (() => {
+              try {
+                const s = JSON.parse(device.sessionData || '{}');
+                return s.model || 'Android Phone';
+              } catch (e) {
+                return null;
+              }
+            })();
 
             return (
               <div 
@@ -364,6 +380,11 @@ export default function Devices() {
                     </div>
 
                     <div className="flex items-center gap-1.5">
+                      {isAndroidAgent && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-200" title={agentModel || 'Android Agent'}>
+                          📱 {agentModel ? (agentModel.length > 18 ? agentModel.substring(0, 18) + '...' : agentModel) : 'Android Relay'}
+                        </span>
+                      )}
                       {device.isPaused && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
                           <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
@@ -468,6 +489,10 @@ export default function Devices() {
                           <span>{device.isPaused ? "Lanjutkan" : "Jeda"}</span>
                         </button>
                       </>
+                    ) : isAndroidAgent ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-500 rounded-md text-[11px] font-medium border border-slate-200">
+                        📱 Aktifkan di APK HP
+                      </span>
                     ) : (
                       <button 
                         onClick={() => handleConnect(device)}
@@ -483,7 +508,7 @@ export default function Devices() {
                       </button>
                     )}
 
-                    {isConnected && (
+                    {isConnected && !isAndroidAgent && (
                       <button 
                         onClick={() => handleConnect(device)}
                         className="p-1 text-slate-400 hover:text-slate-700 hover:bg-white rounded-md transition-colors border border-transparent hover:border-slate-200 cursor-pointer"
