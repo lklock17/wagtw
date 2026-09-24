@@ -152,9 +152,24 @@ app.post('/devices/:deviceId/pairing-code', async (req: Request, res: Response) 
   }
 });
 
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   console.log(`👷 Worker Server ready at http://localhost:${PORT}`);
   
   // Initialize existing sessions
   await waManager.init();
 });
+
+const handleShutdown = async (signal: string) => {
+  console.log(`\n🛑 Worker received ${signal}. Closing WhatsApp sessions gracefully...`);
+  server.close();
+  try {
+    await waManager.shutdown();
+  } catch (err: any) {
+    console.error('Error during waManager.shutdown:', err.message);
+  }
+  process.exit(0);
+};
+
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+process.on('SIGINT', () => handleShutdown('SIGINT'));
+

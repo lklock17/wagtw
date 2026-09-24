@@ -7,6 +7,13 @@ import { exec } from 'child_process';
 import { aiService } from './ai';
 import { telegramNotifier } from './telegram';
 
+const TOKENS_BASE_DIR = process.env.TOKENS_PATH || path.resolve(process.cwd(), 'tokens');
+if (!fs.existsSync(TOKENS_BASE_DIR)) {
+  try {
+    fs.mkdirSync(TOKENS_BASE_DIR, { recursive: true });
+  } catch {}
+}
+
 class WhatsAppManager {
   private sessions: Map<string, wppconnect.Whatsapp> = new Map();
   private cooldowns: Map<string, number> = new Map(); // key: deviceId:remoteNumber -> timestamp
@@ -153,14 +160,17 @@ class WhatsAppManager {
     this.lastAttemptTime.set(deviceId, Date.now());
 
     const safeSession = `dev_${deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    const tokenDir = path.resolve(TOKENS_BASE_DIR, safeSession);
 
     // Clean up any stale singleton locks from previous abruptly terminated browser processes
     try {
-      const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
-      for (const lockFile of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
-        const p = path.join(tokenDir, lockFile);
-        if (fs.existsSync(p)) {
-          fs.unlinkSync(p);
+      if (fs.existsSync(tokenDir)) {
+        for (const lockFile of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+          const p = path.join(tokenDir, lockFile);
+          if (fs.existsSync(p)) {
+            fs.unlinkSync(p);
+            console.log(`[createSession] Removed stale lock ${lockFile} for ${deviceId}`);
+          }
         }
       }
     } catch (e) {
@@ -170,20 +180,10 @@ class WhatsAppManager {
     try {
       const client = await wppconnect.create({
         session: safeSession,
+        folderNameToken: TOKENS_BASE_DIR,
         catchQR: (base64Qr, asciiQR, attempts, urlCode) => {
+          console.log(`[catchQR] Device ${deviceId} (${sessionName}) QR ready (attempt ${attempts})`);
           this.updateDeviceStatus(deviceId, 'QR_READY', base64Qr);
-
-          // If device was previously paired, generating a QR means TRUE LOGOUT from phone!
-          if (!this.loggedOutNotified.has(deviceId)) {
-            prisma.device.findUnique({ where: { id: deviceId } }).then((currentDev) => {
-              if (currentDev?.phoneNumber) {
-                this.loggedOutNotified.add(deviceId);
-                this.reconnectingDevices.delete(deviceId);
-                console.warn(`[Auto-Recovery] Device ${deviceId} (${sessionName}) requires QR scan: TRUE LOGOUT detected!`);
-                this.handleTrueLogout(deviceId, sessionName);
-              }
-            }).catch(() => {});
-          }
         },
         statusFind: (statusSession: any, session: string) => {
           console.log(`[StatusFind] Device ${deviceId} (${sessionName}): ${statusSession} [${session}]`);
@@ -193,9 +193,6 @@ class WhatsAppManager {
             statusSession === 'inChat'
           ) {
             this.handleConnectionSuccess(deviceId, sessionName);
-          } else if (statusSession === 'notLogged') {
-            console.warn(`[StatusFind] Device ${deviceId} (${sessionName}) notLogged: Logout detected!`);
-            this.handleTrueLogout(deviceId, sessionName);
           } else if (
             statusSession === 'desconnectedMobile' || 
             statusSession === 'browserClose' || 
@@ -207,7 +204,6 @@ class WhatsAppManager {
             // QR scan timeout (nobody scanned QR within 3 minutes) - no alert needed, avoid infinite loop!
             console.log(`[StatusFind] Device ${deviceId} (${sessionName}) QR scan expired (autocloseCalled).`);
             this.closingDevices.add(deviceId);
-            this.loggedOutDevices.add(deviceId);
             this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
             this.inProgressSessions.delete(deviceId);
             this.reconnectingDevices.delete(deviceId);
@@ -216,7 +212,7 @@ class WhatsAppManager {
               try { activeClient.close(); } catch {}
               this.sessions.delete(deviceId);
             }
-            setTimeout(() => this.closingDevices.delete(deviceId), 8000);
+            setTimeout(() => this.closingDevices.delete(deviceId), 5000);
           }
         },
         autoClose: 180000,
@@ -227,6 +223,7 @@ class WhatsAppManager {
         debug: false,
         logQR: false,
         puppeteerOptions: {
+          userDataDir: tokenDir,
           defaultViewport: {
             width: 1024,
             height: 768,
@@ -300,16 +297,6 @@ class WhatsAppManager {
 
     } catch (error: any) {
       console.error(`Error creating session ${sessionName}:`, error?.message || error);
-      const errMsg = error?.message || String(error);
-      if (errMsg.includes('TimeoutError') || errMsg.includes('Waiting failed') || errMsg.includes('waitForFunction failed')) {
-        console.warn(`[createSession] Corrupted session token detected for ${deviceId} (${sessionName}). Removing damaged token folder so QR can generate immediately...`);
-        try {
-          const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
-          if (fs.existsSync(tokenDir)) {
-            fs.rmSync(tokenDir, { recursive: true, force: true });
-          }
-        } catch {}
-      }
       this.updateDeviceStatus(deviceId, 'DISCONNECTED');
     } finally {
       this.inProgressSessions.delete(deviceId);
@@ -386,7 +373,7 @@ class WhatsAppManager {
       await this.sendAlert(deviceId, sessionName, 'LOGOUT', dev.phoneNumber);
     }
 
-    // Clean up browser and dead tokens immediately so it won't linger or consume memory
+    // Clean up browser immediately so it won't linger or consume memory
     const client = this.sessions.get(deviceId);
     if (client) {
       try { await client.close(); } catch {}
@@ -399,17 +386,9 @@ class WhatsAppManager {
       exec(`pkill -9 -f ${safeSession}`, () => {});
     } catch {}
 
-    try {
-      const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
-      if (fs.existsSync(tokenDir)) {
-        fs.rmSync(tokenDir, { recursive: true, force: true });
-        console.log(`[handleTrueLogout] Invalidated tokens purged for ${deviceId}`);
-      }
-    } catch {}
-
     setTimeout(() => {
       this.closingDevices.delete(deviceId);
-    }, 10000);
+    }, 8000);
   }
 
   private async updateDeviceStatus(deviceId: string, status: any, qrCode?: string | null) {
@@ -818,7 +797,7 @@ class WhatsAppManager {
 
     // Clean up session token directory on disk
     try {
-      const tokenDir = path.resolve(process.cwd(), 'tokens', safeSession);
+      const tokenDir = path.resolve(TOKENS_BASE_DIR, safeSession);
       if (fs.existsSync(tokenDir)) {
         fs.rmSync(tokenDir, { recursive: true, force: true });
         console.log(`[Logout] Token directory deleted for ${deviceId}: ${tokenDir}`);
@@ -826,6 +805,21 @@ class WhatsAppManager {
     } catch (cleanErr: any) {
       console.warn(`[Logout] Failed to delete token directory for ${deviceId}:`, cleanErr.message);
     }
+  }
+
+  async shutdown() {
+    console.log('[Worker Shutdown] Gracefully closing all active WhatsApp browser sessions...');
+    const closePromises: Promise<any>[] = [];
+    for (const [deviceId, client] of this.sessions.entries()) {
+      closePromises.push(
+        client.close().catch((err: any) => {
+          console.warn(`[Shutdown] Error closing client ${deviceId}:`, err.message);
+        })
+      );
+    }
+    await Promise.allSettled(closePromises);
+    this.sessions.clear();
+    console.log('[Worker Shutdown] All browser sessions closed cleanly.');
   }
 }
 
