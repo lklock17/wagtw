@@ -134,6 +134,16 @@ export default function Devices() {
     }
   };
 
+  const handleSwitchToQrTab = async () => {
+    setConnectTab('qr');
+    if (qrModalDevice && qrModalDevice.status !== 'CONNECTED') {
+      try {
+        await deviceService.connectDevice(qrModalDevice.id);
+        fetchDevices();
+      } catch {}
+    }
+  };
+
   const handleDeleteDevice = async (device: any) => {
     if (!confirm(`Hapus perangkat "${device.name}"?\n\nSesi WhatsApp akan dimatikan dan data riwayat akan dibersihkan.`)) {
       return;
@@ -590,7 +600,7 @@ export default function Devices() {
                 <div className="flex border-b border-slate-200 mb-5">
                   <button
                     type="button"
-                    onClick={() => setConnectTab('qr')}
+                    onClick={handleSwitchToQrTab}
                     className={clsx(
                       "flex-1 pb-3 text-xs font-bold transition-all flex items-center justify-center gap-2 border-b-2 cursor-pointer",
                       connectTab === 'qr'
@@ -617,7 +627,24 @@ export default function Devices() {
                 </div>
 
                 {connectTab === 'qr' ? (
-                  qrModalDevice.qrCode ? (
+                  qrModalDevice.status === 'CONNECTED' ? (
+                    <div className="py-10 flex flex-col items-center justify-center gap-3 text-center">
+                      <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 shadow-sm animate-pulse">
+                        <Check className="w-8 h-8 stroke-[3]" />
+                      </div>
+                      <div>
+                        <h4 className="text-lg font-bold text-slate-800">WhatsApp Sudah Terhubung!</h4>
+                        {qrModalDevice.phoneNumber && (
+                          <p className="text-sm text-slate-600 mt-1 font-mono">
+                            Nomor: <strong className="text-emerald-700">+{qrModalDevice.phoneNumber}</strong>
+                          </p>
+                        )}
+                        <p className="text-xs text-slate-400 mt-2 max-w-xs mx-auto">
+                          Perangkat ini aktif dan siap digunakan. Jika ingin mengganti akun, gunakan tab Kode Pairing atau hapus & buat perangkat baru.
+                        </p>
+                      </div>
+                    </div>
+                  ) : qrModalDevice.qrCode ? (
                     <div className="space-y-5">
                       <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 inline-block shadow-inner">
                         <img 
@@ -625,6 +652,20 @@ export default function Devices() {
                           alt="WhatsApp QR Code" 
                           className="w-60 h-60 mx-auto rounded-xl shadow-sm"
                         />
+                      </div>
+
+                      <div className="flex justify-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            deviceService.connectDevice(qrModalDevice.id);
+                            fetchDevices();
+                          }}
+                          className="px-3.5 py-1.5 text-xs text-emerald-700 hover:text-emerald-800 font-bold bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5 border border-emerald-200"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>Segarkan QR Code</span>
+                        </button>
                       </div>
 
                       <div className="text-left bg-slate-50 p-4 rounded-2xl border border-slate-100 text-xs text-slate-600 space-y-2">
@@ -643,19 +684,19 @@ export default function Devices() {
                   ) : (
                     <div className="py-16 flex flex-col items-center justify-center gap-3">
                       <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
-                      {qrModalDevice.phoneNumber ? (
-                        <>
-                          <p className="text-sm font-bold text-slate-800">Sedang Memulihkan Sesi WhatsApp...</p>
-                          <p className="text-xs text-slate-500 max-w-xs text-center">
-                            Perangkat ini (+{qrModalDevice.phoneNumber}) sedang menyambung ulang otomatis. Jika sesi di HP dicabut, QR code baru akan otomatis tampil.
-                          </p>
-                        </>
-                      ) : (
-                        <>
-                          <p className="text-sm font-bold text-slate-800">Sedang Menyiapkan QR Code...</p>
-                          <p className="text-xs text-slate-400">Chromium sedang memuat WhatsApp Web di server.</p>
-                        </>
-                      )}
+                      <p className="text-sm font-bold text-slate-800">Sedang Menyiapkan QR Code...</p>
+                      <p className="text-xs text-slate-400">Chromium sedang memuat WhatsApp Web di server.</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          deviceService.connectDevice(qrModalDevice.id);
+                          fetchDevices();
+                        }}
+                        className="mt-2 px-3.5 py-1.5 text-xs text-slate-600 hover:text-emerald-700 font-bold bg-slate-100 hover:bg-emerald-50 rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Minta QR Baru</span>
+                      </button>
                     </div>
                   )
                 ) : (

@@ -30,6 +30,7 @@ const handleSessionCreate = async (req: Request, res: Response) => {
 
   // Non-blocking sequential queue
   waManager.enqueueSession(id, name, false);
+  waManager.returnToQrScreen(id);
   res.json({ message: 'Session initialization queued', deviceId: id });
 };
 

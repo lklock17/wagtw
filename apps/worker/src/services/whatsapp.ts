@@ -351,14 +351,43 @@ class WhatsAppManager {
     let resolvedPhone = phoneNumber;
     const client = this.sessions.get(deviceId);
     if (!resolvedPhone && client) {
-      try {
-        const wid = await client.getWid();
-        if (wid) resolvedPhone = wid.replace(/[^0-9]/g, '');
-      } catch {}
-      if (!resolvedPhone) {
+      // Retry polling up to 10 seconds to allow WhatsApp Web to complete session handshake
+      for (let attempt = 0; attempt < 20; attempt++) {
+        if (attempt > 0) {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        try {
+          const wid = await client.getWid();
+          if (wid) {
+            resolvedPhone = wid.replace(/[^0-9]/g, '');
+            if (resolvedPhone) break;
+          }
+        } catch {}
         try {
           const info = await client.getHostDevice();
-          resolvedPhone = info?.wid?.user || (info as any)?.id?.user || (info as any)?.phoneNumber || null;
+          const p = info?.wid?.user || (info as any)?.id?.user || (info as any)?.phoneNumber;
+          if (p) {
+            resolvedPhone = String(p).replace(/[^0-9]/g, '');
+            if (resolvedPhone) break;
+          }
+        } catch {}
+        try {
+          const page = (client as any).page;
+          if (page) {
+            const domPhone = await page.evaluate(() => {
+              const lastWid = window.localStorage.getItem('last-wid');
+              if (lastWid) return lastWid;
+              const wpp = (window as any).WPP;
+              return wpp?.conn?.getMyUserId()?.user ||
+                     wpp?.conn?.getMyUserWid()?.user ||
+                     wpp?.whatsapp?.UserPrefs?.getMeUser()?.user ||
+                     null;
+            });
+            if (domPhone) {
+              resolvedPhone = String(domPhone).replace(/[^0-9]/g, '');
+              if (resolvedPhone) break;
+            }
+          }
         } catch {}
       }
     }
@@ -830,6 +859,33 @@ class WhatsAppManager {
 
   async getClient(deviceId: string) {
     return this.sessions.get(deviceId);
+  }
+
+  async returnToQrScreen(deviceId: string) {
+    const client = this.sessions.get(deviceId);
+    if (!client) return;
+    const page = (client as any).page;
+    if (!page) return;
+    try {
+      await page.evaluate(() => {
+        const spans = Array.from(document.querySelectorAll('span, button, div[role="button"]'));
+        const qrBtn = spans.find((s: any) => {
+          const t = (s.textContent || '').toLowerCase();
+          return t.includes('link with qr') || t.includes('tautkan dengan kode qr') || t.includes('qr code');
+        });
+        if (qrBtn) {
+          (qrBtn as HTMLElement).click();
+          return;
+        }
+        const backBtn = document.querySelector('button[aria-label*="back" i], [data-testid="back"], span[data-icon="back"]');
+        if (backBtn) {
+          (backBtn as HTMLElement).click();
+        }
+      });
+      console.log(`[returnToQrScreen] Switched WhatsApp Web back to QR code screen for ${deviceId}`);
+    } catch (e: any) {
+      console.warn(`[returnToQrScreen] Could not switch back to QR:`, e.message);
+    }
   }
 
   async requestPairingCode(deviceId: string, phoneNumber: string): Promise<string> {
