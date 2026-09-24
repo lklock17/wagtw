@@ -206,8 +206,9 @@ export default function Devices() {
     try {
       const formatted = normalizePhone(pairingPhone);
       const res = await deviceService.getPairingCode(qrModalDevice.id, formatted);
-      if (res.data?.pairingCode) {
-        setPairingCode(res.data.pairingCode);
+      const code = res.data?.pairingCode || res.data?.code;
+      if (code) {
+        setPairingCode(code);
       } else {
         setPairingError('WhatsApp belum memberikan kode pairing. Pastikan Chromium sudah siap.');
       }

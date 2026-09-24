@@ -27,6 +27,7 @@ class WhatsAppManager {
   private disconnectedAlertSent: Set<string> = new Set();
   private loggedOutDevices: Set<string> = new Set();
   private closingDevices: Set<string> = new Set();
+  private authenticatedSessions: Set<string> = new Set();
 
   private sessionQueue: Array<{ deviceId: string; sessionName: string; isAutoRecovery: boolean }> = [];
   private isProcessingQueue: boolean = false;
@@ -394,6 +395,7 @@ class WhatsAppManager {
       }
     });
     console.log(`✅ Device ${deviceId} [${sessionName}] confirmed CONNECTED! Phone: ${resolvedPhone}`);
+    this.authenticatedSessions.add(deviceId);
 
     // Auto-warmup welcome greeting for newly connected device
     try {
@@ -424,6 +426,7 @@ class WhatsAppManager {
     this.closingDevices.add(deviceId);
     this.loggedOutDevices.add(deviceId);
     this.reconnectingDevices.delete(deviceId);
+    this.authenticatedSessions.delete(deviceId);
 
     // Cancel any pending temporary disconnect alert
     const pendingTimer = this.disconnectAlertTimers.get(deviceId);
@@ -612,11 +615,13 @@ class WhatsAppManager {
       if (state === 'CONNECTED') {
         await this.handleConnectionSuccess(deviceId, sessionName);
       } else if (state === 'UNPAIRED') {
-        const dev = await prisma.device.findUnique({ where: { id: deviceId } });
-        if (dev && dev.phoneNumber) {
+        const wasAuthenticated = this.authenticatedSessions.has(deviceId);
+        if (wasAuthenticated) {
+          console.log(`[onStateChange] Device ${deviceId} (${sessionName}) was authenticated but is now UNPAIRED. Logging out.`);
+          this.authenticatedSessions.delete(deviceId);
           await this.handleTrueLogout(deviceId, sessionName);
         } else {
-          console.log(`[onStateChange] Device ${deviceId} (${sessionName}) is awaiting initial QR scan (State: UNPAIRED). Preserving session.`);
+          console.log(`[onStateChange] Device ${deviceId} (${sessionName}) is awaiting initial QR scan / pairing (State: UNPAIRED). Preserving session.`);
         }
       } else if (state === 'DISCONNECTED' || state === 'TIMEOUT' || state === 'UNLAUNCHED') {
         await this.handleTemporaryDisconnect(deviceId, sessionName, state);
@@ -776,26 +781,74 @@ class WhatsAppManager {
   }
 
   async requestPairingCode(deviceId: string, phoneNumber: string): Promise<string> {
-    const client = this.sessions.get(deviceId);
-    if (!client) throw new Error('Device session is not initializing or not found. Pastikan device dalam proses inisialisasi.');
+    let client = this.sessions.get(deviceId);
+    if (!client) {
+      const dev = await prisma.device.findUnique({ where: { id: deviceId } });
+      if (!dev) throw new Error('Device tidak ditemukan');
+
+      console.log(`[requestPairingCode] Session not running for ${deviceId} (${dev.name}). Queueing initialization...`);
+      this.enqueueSession(deviceId, dev.name, false);
+
+      // Wait up to 25s for session client and page to be ready
+      const start = Date.now();
+      while (Date.now() - start < 25000) {
+        await new Promise((r) => setTimeout(r, 1000));
+        client = this.sessions.get(deviceId);
+        if (client && (client as any).page) break;
+      }
+    }
+
+    if (!client) {
+      throw new Error('Device session sedang disiapkan. Silakan tunggu beberapa detik dan coba klik "Minta Kode" kembali.');
+    }
 
     const page = (client as any).page;
-    if (!page) throw new Error('Browser page not available');
+    if (!page) throw new Error('Halaman browser WhatsApp Web belum siap.');
 
     // Clean phone number to digits only (e.g. 62817101337)
     let cleaned = phoneNumber.replace(/[^0-9]/g, '');
     if (cleaned.startsWith('0')) cleaned = '62' + cleaned.substring(1);
     else if (cleaned.startsWith('8')) cleaned = '62' + cleaned;
 
+    // Ensure the page has loaded the login interface or QR code
+    try {
+      await page.waitForSelector('canvas, [data-testid="link-device-phone-number-code-screen-link"], div[role="button"], span', { timeout: 12000 });
+    } catch {}
+
+    // Method 1: Try WPP wa-js API directly
+    try {
+      const wppResult = await page.evaluate(async (phone: string) => {
+        const wpp = (window as any).WPP;
+        if (wpp && wpp.conn) {
+          if (typeof wpp.conn.genLinkDeviceCodeForPhoneNumber === 'function') {
+            return await wpp.conn.genLinkDeviceCodeForPhoneNumber(phone);
+          }
+          if (typeof wpp.conn.startLinkDeviceCodeForPhoneNumber === 'function') {
+            return await wpp.conn.startLinkDeviceCodeForPhoneNumber(phone);
+          }
+        }
+        return null;
+      }, cleaned);
+
+      if (wppResult && typeof wppResult === 'string' && wppResult.length >= 8) {
+        console.log(`[requestPairingCode] Successfully retrieved pairing code via WPP API for ${deviceId}: ${wppResult}`);
+        return wppResult;
+      }
+    } catch (e: any) {
+      console.warn(`[requestPairingCode] WPP API method failed, trying UI simulation:`, e.message);
+    }
+
+    // Method 2: Fallback to UI Automation
     const code = await page.evaluate(async (phone: string) => {
       // 1. Look for the "Link with phone number" button
-      const allSpans = Array.from(document.querySelectorAll('span, div[role="button"]'));
+      const allSpans = Array.from(document.querySelectorAll('span, div[role="button"], button, a'));
       const linkButton = allSpans.find((el: any) => {
         const txt = (el.textContent || '').toLowerCase();
         return txt.includes('link with phone number') || 
                txt.includes('tautkan dengan nomor telepon') ||
                txt.includes('link with phone') ||
-               txt.includes('tautkan dengan nomor');
+               txt.includes('tautkan dengan nomor') ||
+               txt.includes('nomor telepon saja');
       });
 
       if (linkButton) {
@@ -806,7 +859,13 @@ class WhatsAppManager {
 
       // 2. Find phone input
       const inputs = Array.from(document.querySelectorAll('input'));
-      const phoneInput = inputs.find((i: any) => i.type === 'text' || i.getAttribute('aria-label')?.includes('phone') || i.inputMode === 'numeric') || inputs[inputs.length - 1];
+      const phoneInput = inputs.find((i: any) => 
+        i.type === 'text' || 
+        i.getAttribute('aria-label')?.toLowerCase().includes('phone') || 
+        i.getAttribute('aria-label')?.toLowerCase().includes('telepon') || 
+        i.getAttribute('data-testid')?.toLowerCase().includes('phone') ||
+        i.inputMode === 'numeric'
+      ) || inputs[inputs.length - 1];
 
       if (phoneInput) {
         phoneInput.focus();
@@ -826,7 +885,7 @@ class WhatsAppManager {
       // 3. Click Next button
       const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
       const nextBtn = buttons.find((b: any) => {
-        const txt = (b.textContent || '').toLowerCase();
+        const txt = (b.textContent || '').toLowerCase().trim();
         return txt === 'next' || txt === 'lanjut' || txt === 'lanjutkan';
       });
 
@@ -834,22 +893,25 @@ class WhatsAppManager {
         (nextBtn as HTMLElement).click();
       }
 
-      // 4. Wait for 8-char code display
-      await new Promise((r) => setTimeout(r, 2500));
+      // 4. Poll for 8-char code display (up to 8 seconds)
+      for (let attempt = 0; attempt < 16; attempt++) {
+        await new Promise((r) => setTimeout(r, 500));
 
-      // Check elements with 8-character pairing code format (e.g. ABCD-1234 or 8 digits)
-      for (const el of Array.from(document.querySelectorAll('*'))) {
-        const text = (el.textContent || '').trim();
-        if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(text)) {
-          return text;
+        // Check elements with 8-character pairing code format (e.g. ABCD-1234 or 8 digits)
+        const allElements = Array.from(document.querySelectorAll('div, span, p, [data-testid*="code"], [data-testid*="pairing"]'));
+        for (const el of allElements) {
+          const text = (el.textContent || '').trim();
+          if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(text)) {
+            return text;
+          }
         }
-      }
 
-      const codeChars = Array.from(document.querySelectorAll('div[data-testid*="code"], div[aria-label*="code"], span'))
-        .filter((el: any) => /^[A-Z0-9]{4}-[A-Z0-9]{4}$|^[A-Z0-9]{8}$/.test((el.textContent || '').trim()));
+        const codeChars = Array.from(document.querySelectorAll('div[data-testid*="code"], div[aria-label*="code"], span'))
+          .filter((el: any) => /^[A-Z0-9]{4}-[A-Z0-9]{4}$|^[A-Z0-9]{8}$/.test((el.textContent || '').trim()));
 
-      if (codeChars.length > 0) {
-        return codeChars[0].textContent?.trim();
+        if (codeChars.length > 0) {
+          return codeChars[0].textContent?.trim();
+        }
       }
 
       return null;
@@ -862,6 +924,7 @@ class WhatsAppManager {
   }
 
   async logout(deviceId: string) {
+    this.authenticatedSessions.delete(deviceId);
     this.inProgressSessions.delete(deviceId);
     this.reconnectingDevices.delete(deviceId);
     this.loggedOutNotified.delete(deviceId);

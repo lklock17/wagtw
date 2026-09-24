@@ -145,7 +145,7 @@ app.post('/devices/:deviceId/pairing-code', async (req: Request, res: Response) 
 
   try {
     const code = await waManager.requestPairingCode(deviceId, phone);
-    res.json({ success: true, deviceId, phone, code });
+    res.json({ success: true, deviceId, phone, code, pairingCode: code });
   } catch (error: any) {
     console.error(`Failed to request pairing code for device ${deviceId}:`, error.message);
     res.status(500).json({ success: false, error: error.message });

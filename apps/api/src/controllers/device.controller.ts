@@ -110,8 +110,14 @@ export const getPairingCode = async (req: Request, res: Response) => {
   }
 
   try {
-    const response = await axios.post(`${WORKER_URL}/devices/${id}/pairing-code`, { phone }, { timeout: 15000 });
-    res.json(response.data);
+    const response = await axios.post(`${WORKER_URL}/devices/${id}/pairing-code`, { phone }, { timeout: 35000 });
+    const pairingCode = response.data?.pairingCode || response.data?.code;
+    res.json({
+      success: true,
+      ...response.data,
+      pairingCode,
+      code: pairingCode
+    });
   } catch (error: any) {
     res.status(error.response?.status || 500).json({
       success: false,
