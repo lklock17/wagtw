@@ -26,9 +26,10 @@ export const deviceService = {
 };
 
 export const inboxService = {
-  getThreads: (deviceId?: string) =>
-    api.get('/inbox/threads', { params: deviceId && deviceId !== 'all' ? { deviceId } : undefined }),
-  getMessages: (threadId: string) => api.get(`/inbox/threads/${threadId}/messages`),
+  getThreads: (params?: { deviceId?: string; page?: number; limit?: number; search?: string; filterType?: string }) =>
+    api.get('/inbox/threads', { params }),
+  getMessages: (threadId: string, params?: { limit?: number; before?: string }) =>
+    api.get(`/inbox/threads/${threadId}/messages`, { params }),
   markAsRead: (threadId: string) => api.post(`/inbox/threads/${threadId}/read`),
 };
 

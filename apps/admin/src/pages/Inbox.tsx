@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Search, 
   Send, 
@@ -13,7 +13,10 @@ import {
   ArrowLeft,
   X,
   Filter,
-  CheckCircle2
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Clock
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { inboxService, messageService, deviceService } from '../services/api';
@@ -38,27 +41,59 @@ export default function Inbox() {
   const [threads, setThreads] = useState<any[]>([]);
   const [devices, setDevices] = useState<any[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('all');
+  
+  // Thread Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalThreads, setTotalThreads] = useState(0);
+  const [loadingThreads, setLoadingThreads] = useState(false);
+
+  // Message & Chat State
   const [messages, setMessages] = useState<any[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+
   const [inputText, setInputText] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'direct' | 'channel'>('all');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  // Initial load
   useEffect(() => {
     fetchDevices();
-    fetchThreads('all');
-    const interval = setInterval(() => {
-      fetchThreads(selectedDeviceId);
-    }, 8000);
-    return () => clearInterval(interval);
-  }, [selectedDeviceId]);
+  }, []);
 
+  // Fetch threads whenever device, page, or category changes
+  useEffect(() => {
+    fetchThreads(currentPage, selectedDeviceId, searchQuery, filterType);
+    const interval = setInterval(() => {
+      fetchThreads(currentPage, selectedDeviceId, searchQuery, filterType, true);
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [currentPage, selectedDeviceId, filterType]);
+
+  // When search query changes, debounce fetch to page 1
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setCurrentPage(1);
+      fetchThreads(1, selectedDeviceId, searchQuery, filterType);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // When selected chat changes, load its messages
   useEffect(() => {
     if (selectedChat) {
-      fetchMessages(selectedChat.id);
+      fetchInitialMessages(selectedChat.id);
+    } else {
+      setMessages([]);
+      setHasMoreMessages(false);
     }
-  }, [selectedChat]);
+  }, [selectedChat?.id]);
 
   const fetchDevices = async () => {
     try {
@@ -69,31 +104,94 @@ export default function Inbox() {
     }
   };
 
-  const fetchThreads = async (devId = selectedDeviceId) => {
+  const fetchThreads = async (
+    page = currentPage,
+    devId = selectedDeviceId,
+    search = searchQuery,
+    type = filterType,
+    silent = false
+  ) => {
+    if (!silent) setLoadingThreads(true);
     try {
-      const res = await inboxService.getThreads(devId);
-      setThreads(res.data || []);
+      const res = await inboxService.getThreads({
+        deviceId: devId !== 'all' ? devId : undefined,
+        page,
+        limit: 15,
+        search: search.trim() || undefined,
+        filterType: type !== 'all' ? type : undefined
+      });
+
+      const list = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      const meta = res.data?.pagination || { page, limit: 15, total: list.length, totalPages: 1 };
+
+      setThreads(list);
+      setCurrentPage(meta.page);
+      setTotalPages(meta.totalPages);
+      setTotalThreads(meta.total);
     } catch (err) {
       console.error('Failed to fetch threads:', err);
+    } finally {
+      if (!silent) setLoadingThreads(false);
     }
   };
 
   const handleDeviceChange = (newDeviceId: string) => {
     setSelectedDeviceId(newDeviceId);
-    fetchThreads(newDeviceId);
-    // If active chat doesn't belong to the newly selected device, unselect it
+    setCurrentPage(1);
+    fetchThreads(1, newDeviceId, searchQuery, filterType);
     if (selectedChat && newDeviceId !== 'all' && selectedChat.deviceId !== newDeviceId) {
       setSelectedChat(null);
     }
   };
 
-  const fetchMessages = async (threadId: string) => {
+  const handleFilterChange = (newType: 'all' | 'direct' | 'channel') => {
+    setFilterType(newType);
+    setCurrentPage(1);
+    fetchThreads(1, selectedDeviceId, searchQuery, newType);
+  };
+
+  const fetchInitialMessages = async (threadId: string) => {
+    setLoadingMessages(true);
     try {
-      const res = await inboxService.getMessages(threadId);
-      setMessages(res.data || []);
+      const res = await inboxService.getMessages(threadId, { limit: 35 });
+      const msgs = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      setMessages(msgs);
+      setHasMoreMessages(Boolean(res.data?.hasMore));
       await inboxService.markAsRead(threadId);
+
+      // Scroll to bottom
+      setTimeout(() => {
+        if (chatContainerRef.current) {
+          chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+        }
+      }, 100);
     } catch (err) {
       console.error(err);
+    } finally {
+      setLoadingMessages(false);
+    }
+  };
+
+  const fetchOlderMessages = async () => {
+    if (!selectedChat || messages.length === 0 || loadingOlder) return;
+    setLoadingOlder(true);
+    const oldestTimestamp = messages[0].timestamp;
+    try {
+      const res = await inboxService.getMessages(selectedChat.id, { 
+        limit: 35, 
+        before: oldestTimestamp 
+      });
+      const older = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      if (older.length > 0) {
+        setMessages((prev) => [...older, ...prev]);
+        setHasMoreMessages(Boolean(res.data?.hasMore));
+      } else {
+        setHasMoreMessages(false);
+      }
+    } catch (err) {
+      console.error('Failed to load older messages:', err);
+    } finally {
+      setLoadingOlder(false);
     }
   };
 
@@ -120,10 +218,16 @@ export default function Inbox() {
       setMessages((prev) => [...prev, tempMsg]);
       setInputText('');
 
-      // Refresh server state
+      // Scroll to bottom
       setTimeout(() => {
-        fetchMessages(selectedChat.id);
-        fetchThreads(selectedDeviceId);
+        if (chatContainerRef.current) {
+          chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+        }
+      }, 50);
+
+      // Refresh server state silently
+      setTimeout(() => {
+        fetchThreads(currentPage, selectedDeviceId, searchQuery, filterType, true);
       }, 700);
     } catch (err: any) {
       alert('Gagal mengirim pesan: ' + (err.response?.data?.error || err.message));
@@ -207,21 +311,62 @@ export default function Inbox() {
     };
   };
 
-  const filteredThreads = threads.filter((t) => {
-    const isChannel = t.remoteNumber.endsWith('@newsletter');
-    if (filterType === 'direct' && isChannel) return false;
-    if (filterType === 'channel' && !isChannel) return false;
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      const matchNum = t.remoteNumber.toLowerCase().includes(q);
-      const matchMsg = t.lastMessage && t.lastMessage.toLowerCase().includes(q);
-      const matchName = t.contactName && t.contactName.toLowerCase().includes(q);
-      const matchFormatted = t.formattedNumber && t.formattedNumber.toLowerCase().includes(q);
-      const matchDev = t.device?.name && t.device.name.toLowerCase().includes(q);
-      return matchNum || matchMsg || matchName || matchFormatted || matchDev;
+  // Helper to generate numbered pagination items
+  const renderPaginationButtons = () => {
+    if (totalPages <= 1) return null;
+
+    const pages: (number | string)[] = [];
+    const maxButtons = 5;
+
+    if (totalPages <= maxButtons) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      let start = Math.max(2, currentPage - 1);
+      let end = Math.min(totalPages - 1, currentPage + 1);
+
+      if (currentPage <= 2) {
+        end = 3;
+      } else if (currentPage >= totalPages - 1) {
+        start = totalPages - 2;
+      }
+
+      if (start > 2) pages.push('...');
+      for (let i = start; i <= end; i++) pages.push(i);
+      if (end < totalPages - 1) pages.push('...');
+      pages.push(totalPages);
     }
-    return true;
-  });
+
+    return (
+      <div className="flex items-center gap-1">
+        {pages.map((p, idx) => {
+          if (p === '...') {
+            return (
+              <span key={`dots-${idx}`} className="px-1 text-slate-400 text-xs select-none">
+                •••
+              </span>
+            );
+          }
+          const pageNum = Number(p);
+          const isActive = currentPage === pageNum;
+          return (
+            <button
+              key={`page-${pageNum}`}
+              onClick={() => setCurrentPage(pageNum)}
+              className={clsx(
+                "w-7 h-7 rounded-lg text-xs font-semibold flex items-center justify-center transition-colors cursor-pointer",
+                isActive
+                  ? "bg-emerald-600 text-white shadow-2xs font-bold"
+                  : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+              )}
+            >
+              {pageNum}
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
     <div className="h-[calc(100vh-6.5rem)] flex gap-4 w-full pb-2 overflow-hidden">
@@ -236,15 +381,16 @@ export default function Inbox() {
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
               <span>Pesan Masuk</span>
               <span className="px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[10px] font-mono">
-                {threads.length}
+                {totalThreads}
               </span>
             </h2>
             <button 
-              onClick={() => fetchThreads(selectedDeviceId)} 
-              className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-200/60 transition-colors cursor-pointer"
+              onClick={() => fetchThreads(currentPage, selectedDeviceId, searchQuery, filterType)} 
+              disabled={loadingThreads}
+              className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-200/60 transition-colors cursor-pointer disabled:opacity-50"
               title="Perbarui daftar chat"
             >
-              <RotateCw className="w-3.5 h-3.5" />
+              <RotateCw className={clsx("w-3.5 h-3.5", loadingThreads && "animate-spin text-emerald-600")} />
             </button>
           </div>
 
@@ -280,7 +426,7 @@ export default function Inbox() {
           {/* Category Filter Pills */}
           <div className="flex items-center gap-1.5 pt-0.5">
             <button
-              onClick={() => setFilterType('all')}
+              onClick={() => handleFilterChange('all')}
               className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full transition-colors cursor-pointer ${
                 filterType === 'all'
                   ? 'bg-emerald-600 text-white shadow-2xs'
@@ -290,7 +436,7 @@ export default function Inbox() {
               Semua
             </button>
             <button
-              onClick={() => setFilterType('direct')}
+              onClick={() => handleFilterChange('direct')}
               className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full transition-colors cursor-pointer ${
                 filterType === 'direct'
                   ? 'bg-emerald-600 text-white shadow-2xs'
@@ -300,7 +446,7 @@ export default function Inbox() {
               Personal
             </button>
             <button
-              onClick={() => setFilterType('channel')}
+              onClick={() => handleFilterChange('channel')}
               className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full transition-colors cursor-pointer ${
                 filterType === 'channel'
                   ? 'bg-emerald-600 text-white shadow-2xs'
@@ -314,7 +460,12 @@ export default function Inbox() {
 
         {/* Thread Items List */}
         <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
-          {filteredThreads.length === 0 ? (
+          {loadingThreads && threads.length === 0 ? (
+            <div className="p-8 text-center text-slate-400">
+              <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin text-emerald-600" />
+              <p className="text-xs">Memuat daftar obrolan...</p>
+            </div>
+          ) : threads.length === 0 ? (
             <div className="p-8 text-center text-slate-400">
               <User className="w-8 h-8 mx-auto mb-2 text-slate-300" />
               <p className="text-xs font-semibold text-slate-600">Tidak ada percakapan</p>
@@ -325,7 +476,7 @@ export default function Inbox() {
               </p>
             </div>
           ) : (
-            filteredThreads.map((chat) => {
+            threads.map((chat) => {
               const info = getContactDisplay(chat);
               const isSelected = selectedChat?.id === chat.id;
               const hasImage = isBase64Image(chat.lastMessage);
@@ -405,6 +556,31 @@ export default function Inbox() {
             })
           )}
         </div>
+
+        {/* Numbered Pagination Footer */}
+        {totalPages > 1 && (
+          <div className="p-2.5 border-t border-slate-200/80 bg-slate-50/80 flex items-center justify-between gap-2 shrink-0">
+            <button
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage <= 1 || loadingThreads}
+              className="p-1 text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-md disabled:opacity-40 disabled:hover:bg-transparent transition-colors cursor-pointer"
+              title="Halaman Sebelumnya"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            {renderPaginationButtons()}
+
+            <button
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage >= totalPages || loadingThreads}
+              className="p-1 text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-md disabled:opacity-40 disabled:hover:bg-transparent transition-colors cursor-pointer"
+              title="Halaman Berikutnya"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Right Column: Chat Conversation View */}
@@ -472,11 +648,12 @@ export default function Inbox() {
 
                   <div className="flex items-center gap-1 shrink-0">
                     <button 
-                      onClick={() => fetchMessages(selectedChat.id)} 
+                      onClick={() => fetchInitialMessages(selectedChat.id)} 
+                      disabled={loadingMessages}
                       className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
                       title="Perbarui percakapan"
                     >
-                      <RotateCw className="w-4 h-4" />
+                      <RotateCw className={clsx("w-4 h-4", loadingMessages && "animate-spin text-emerald-600")} />
                     </button>
                   </div>
                 </div>
@@ -484,8 +661,39 @@ export default function Inbox() {
             })()}
 
             {/* Chat Messages Body */}
-            <div className="flex-1 min-h-0 bg-slate-100/60 p-4 sm:p-5 space-y-3 overflow-y-auto flex flex-col">
-              {messages.length === 0 ? (
+            <div 
+              ref={chatContainerRef}
+              className="flex-1 min-h-0 bg-slate-100/60 p-4 sm:p-5 space-y-3 overflow-y-auto flex flex-col"
+            >
+              {/* Load Older Messages Button */}
+              {hasMoreMessages && (
+                <div className="flex justify-center pb-2">
+                  <button
+                    onClick={fetchOlderMessages}
+                    disabled={loadingOlder}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 hover:text-slate-900 rounded-full text-[11px] font-semibold shadow-2xs transition-colors cursor-pointer disabled:opacity-60"
+                  >
+                    {loadingOlder ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin text-emerald-600" />
+                        <span>Memuat pesan terdahulu...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Clock className="w-3 h-3 text-slate-400" />
+                        <span>Muat pesan sebelumnya</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {loadingMessages ? (
+                <div className="flex-1 flex items-center justify-center text-slate-400 text-xs">
+                  <Loader2 className="w-5 h-5 animate-spin text-emerald-600 mr-2" />
+                  Memuat riwayat percakapan...
+                </div>
+              ) : messages.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-slate-400 text-xs">
                   Belum ada rekaman riwayat pesan.
                 </div>
