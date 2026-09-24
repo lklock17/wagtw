@@ -10,6 +10,7 @@ router.post('/:id/check-number', deviceController.checkNumber);
 router.post('/:id/pairing-code', deviceController.getPairingCode);
 router.delete('/:id', deviceController.deleteDevice);
 router.patch('/:id/webhook', deviceController.updateWebhook);
+router.patch('/:id/toggle-pause', deviceController.togglePauseDevice);
 router.post('/test-webhook', deviceController.testWebhook);
 
 export default router;

@@ -37,6 +37,7 @@ export const deviceService = {
   testWebhook: (url: string) => api.post('/devices/test-webhook', { url }),
   getPairingCode: (id: string, phone: string) => api.post(`/devices/${id}/pairing-code`, { phone }),
   checkNumber: (id: string, phone: string) => api.post(`/devices/${id}/check-number`, { phone }),
+  togglePause: (id: string) => api.patch(`/devices/${id}/toggle-pause`),
 };
 
 export const inboxService = {

@@ -20,7 +20,9 @@ import {
   Copy,
   CheckCircle2,
   XCircle,
-  Hash
+  Hash,
+  Pause,
+  Play
 } from 'lucide-react';
 import { deviceService, messageService } from '../services/api';
 import { clsx } from 'clsx';
@@ -163,6 +165,20 @@ export default function Devices() {
     }
   };
 
+  const [pausingId, setPausingId] = useState<string | null>(null);
+
+  const handleTogglePause = async (device: any) => {
+    setPausingId(device.id);
+    try {
+      await deviceService.togglePause(device.id);
+      fetchDevices();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Gagal mengubah status jeda perangkat');
+    } finally {
+      setPausingId(null);
+    }
+  };
+
   const normalizePhone = (input: string) => {
     let cleaned = input.replace(/[^0-9]/g, '');
     if (cleaned.startsWith('0')) {
@@ -248,7 +264,21 @@ export default function Devices() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-2 border-b border-slate-200">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">Manajemen WhatsApp Devices</h1>
-          <p className="text-xs text-slate-500 mt-0.5">Kelola multi-nomor WhatsApp Anda dalam satu panel kendali terpusat.</p>
+          <div className="flex flex-wrap items-center gap-2 mt-1">
+            <p className="text-xs text-slate-500">Kelola multi-nomor WhatsApp Anda dalam satu panel kendali terpusat.</p>
+            {devices.length > 0 && (
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold">
+                <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  {devices.filter(d => d.status === 'CONNECTED' && !d.isPaused).length} Siap Blast
+                </span>
+                {devices.some(d => d.isPaused) && (
+                  <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                    {devices.filter(d => d.isPaused).length} Dijeda
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button 
@@ -316,22 +346,32 @@ export default function Devices() {
                       <Smartphone className="w-4 h-4 text-slate-700" />
                     </div>
 
-                    <span className={clsx(
-                      "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider",
-                      isConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60" :
-                      isQR ? "bg-blue-50 text-blue-700 border border-blue-200/60 animate-pulse" :
-                      isConnecting ? "bg-indigo-50 text-indigo-700 border border-indigo-200/60 animate-pulse" :
-                      "bg-slate-100 text-slate-600 border border-slate-200"
-                    )}>
+                    <div className="flex items-center gap-1.5">
+                      {device.isPaused && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                          DIJEDA
+                        </span>
+                      )}
                       <span className={clsx(
-                        "w-1.5 h-1.5 rounded-full",
-                        isConnected ? "bg-emerald-500" :
-                        isQR ? "bg-blue-500" :
-                        isConnecting ? "bg-indigo-500" :
-                        "bg-slate-400"
-                      )}></span>
-                      {device.status}
-                    </span>
+                        "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                        device.isPaused ? "bg-slate-100 text-slate-500 border border-slate-200" :
+                        isConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60" :
+                        isQR ? "bg-blue-50 text-blue-700 border border-blue-200/60 animate-pulse" :
+                        isConnecting ? "bg-indigo-50 text-indigo-700 border border-indigo-200/60 animate-pulse" :
+                        "bg-slate-100 text-slate-600 border border-slate-200"
+                      )}>
+                        <span className={clsx(
+                          "w-1.5 h-1.5 rounded-full",
+                          device.isPaused ? "bg-amber-400" :
+                          isConnected ? "bg-emerald-500" :
+                          isQR ? "bg-blue-500" :
+                          isConnecting ? "bg-indigo-500" :
+                          "bg-slate-400"
+                        )}></span>
+                        {device.status}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Device Info */}
@@ -377,17 +417,40 @@ export default function Devices() {
                 <div className="bg-slate-50/80 px-3.5 py-2 border-t border-slate-100 flex items-center justify-between gap-1.5">
                   <div className="flex items-center gap-1.5">
                     {isConnected ? (
-                      <button 
-                        onClick={() => {
-                          setTestModalDevice(device);
-                          setTestPhone('');
-                          setTestSentStatus(null);
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-[11px] font-semibold transition-colors cursor-pointer"
-                      >
-                        <SendIcon className="w-3 h-3" />
-                        <span>Kirim Tes</span>
-                      </button>
+                      <>
+                        <button 
+                          onClick={() => {
+                            setTestModalDevice(device);
+                            setTestPhone('');
+                            setTestSentStatus(null);
+                          }}
+                          className="inline-flex items-center gap-1 px-2 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-[11px] font-semibold transition-colors cursor-pointer"
+                        >
+                          <SendIcon className="w-3 h-3" />
+                          <span>Kirim Tes</span>
+                        </button>
+
+                        <button 
+                          onClick={() => handleTogglePause(device)}
+                          disabled={pausingId === device.id}
+                          className={clsx(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold transition-all border cursor-pointer",
+                            device.isPaused
+                              ? "bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 shadow-xs"
+                              : "bg-white hover:bg-slate-100 text-slate-700 border-slate-200"
+                          )}
+                          title={device.isPaused ? "Lanjutkan nomor ini (ikut blast & auto-reply)" : "Jeda nomor ini (tidak ikut blast & auto-reply)"}
+                        >
+                          {pausingId === device.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : device.isPaused ? (
+                            <Play className="w-3 h-3 fill-amber-600 text-amber-600" />
+                          ) : (
+                            <Pause className="w-3 h-3 text-slate-600" />
+                          )}
+                          <span>{device.isPaused ? "Lanjutkan" : "Jeda"}</span>
+                        </button>
+                      </>
                     ) : (
                       <button 
                         onClick={() => handleConnect(device)}

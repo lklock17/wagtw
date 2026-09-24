@@ -89,16 +89,17 @@ export default function Broadcast() {
       return;
     }
 
-    if (devices.length === 0) {
-      setAlertMsg({ type: 'error', text: 'Tidak ada perangkat WhatsApp yang aktif (CONNECTED).' });
+    const activeConnected = devices.filter((d: any) => !d.isPaused);
+    if (activeConnected.length === 0) {
+      setAlertMsg({ type: 'error', text: 'Tidak ada perangkat WhatsApp yang aktif dan tidak dijeda (Unpaused).' });
       return;
     }
 
     setLoading(true);
     setAlertMsg(null);
     try {
-      // If 'rotate', use the first connected device or let worker handle
-      const devId = selectedDevice === 'rotate' ? devices[0]?.id : selectedDevice;
+      // If 'rotate', use the first active unpaused device or let worker handle
+      const devId = selectedDevice === 'rotate' ? activeConnected[0]?.id : selectedDevice;
       await bulkService.createJob({
         name: jobName || `Kampanye ${new Date().toLocaleDateString('id-ID')} ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`,
         deviceId: devId,
@@ -186,10 +187,12 @@ export default function Broadcast() {
                   onChange={(e) => setSelectedDevice(e.target.value)}
                   className="w-full px-3 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 >
-                  <option value="rotate">⚡ Auto-Rotate Pool (Semua Nomor Aktif)</option>
+                  <option value="rotate">
+                    ⚡ Auto-Rotate Pool ({devices.filter(d => !d.isPaused).length} Nomor Aktif)
+                  </option>
                   {devices.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name} (+{d.phoneNumber || 'no-number'})
+                    <option key={d.id} value={d.id} disabled={d.isPaused}>
+                      {d.name} (+{d.phoneNumber || 'no-number'}) {d.isPaused ? '(⏸️ Sedang Dijeda)' : ''}
                     </option>
                   ))}
                 </select>

@@ -125,3 +125,27 @@ export const getPairingCode = async (req: Request, res: Response) => {
     });
   }
 };
+
+export const togglePauseDevice = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const device = await prisma.device.findUnique({ where: { id } });
+    if (!device) return res.status(404).json({ error: 'Device not found' });
+
+    const updated = await prisma.device.update({
+      where: { id },
+      data: { isPaused: !device.isPaused }
+    });
+
+    res.json({
+      success: true,
+      deviceId: id,
+      isPaused: updated.isPaused,
+      message: updated.isPaused 
+        ? `Perangkat "${device.name}" dijeda (tidak ikut blast & auto-reply).` 
+        : `Perangkat "${device.name}" aktif kembali.`
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};

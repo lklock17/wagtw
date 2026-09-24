@@ -260,6 +260,7 @@ export class WarmupService {
         let connectedDevices = await prisma.device.findMany({
           where: {
             status: 'CONNECTED',
+            isPaused: false,
             phoneNumber: { not: null }
           }
         });
@@ -500,6 +501,7 @@ export class WarmupService {
         where: {
           id: { not: newDeviceId },
           status: 'CONNECTED',
+          isPaused: false,
           phoneNumber: { not: null }
         }
       });

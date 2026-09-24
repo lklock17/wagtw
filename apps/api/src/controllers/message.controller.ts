@@ -46,16 +46,16 @@ export const sendMessage = async (req: Request, res: Response) => {
 
   const recipient = formatPhoneNumber(to);
 
-  // Fetch all currently connected devices
+  // Fetch all currently connected and unpaused devices
   const connectedDevices = await prisma.device.findMany({
-    where: { status: 'CONNECTED' },
+    where: { status: 'CONNECTED', isPaused: false },
     orderBy: { createdAt: 'asc' }
   });
 
   if (connectedDevices.length === 0) {
     return res.status(503).json({
       success: false,
-      error: 'No active WhatsApp devices connected. Please connect at least one device on the dashboard.'
+      error: 'Tidak ada perangkat WhatsApp yang aktif (CONNECTED dan tidak dijeda). Silakan aktifkan/hubungkan minimal satu perangkat di dashboard.'
     });
   }
 
@@ -65,7 +65,15 @@ export const sendMessage = async (req: Request, res: Response) => {
   const isRotationRequested = autoRotate || !deviceId || deviceId === 'auto' || deviceId === 'rotate';
 
   if (!isRotationRequested) {
-    // Specific device requested
+    // Specific device requested - check if it's paused
+    const targetDevice = await prisma.device.findUnique({ where: { id: deviceId } });
+    if (targetDevice?.isPaused) {
+      return res.status(400).json({
+        success: false,
+        error: `Perangkat '${targetDevice.name}' sedang dalam status DIJEDA (Paused). Aktifkan perangkat terlebih dahulu untuk mengirim pesan.`
+      });
+    }
+
     const requestedDevice = connectedDevices.find((d) => d.id === deviceId);
     if (requestedDevice) {
       candidateQueue = [requestedDevice];
@@ -81,7 +89,7 @@ export const sendMessage = async (req: Request, res: Response) => {
       } else {
         return res.status(400).json({
           success: false,
-          error: `Specified device '${deviceId}' is not connected or not found.`
+          error: `Specified device '${deviceId}' is not connected, paused, or not found.`
         });
       }
     }

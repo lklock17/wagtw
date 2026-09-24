@@ -765,8 +765,8 @@ class WhatsAppManager {
         });
       }
 
-      // 3. AI Auto Reply with Cooldown
-      if (!message.fromMe && message.body && device?.autoReply) {
+      // 3. AI Auto Reply with Cooldown (Skip if device is paused)
+      if (!message.fromMe && message.body && device?.autoReply && !device?.isPaused) {
         // Fetch rules
         const rules = await prisma.autoReplyRule.findMany({ where: { isActive: true } });
         

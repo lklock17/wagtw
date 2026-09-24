@@ -49,6 +49,7 @@ model Device {
   qrCode        String?      @db.Text
   sessionData   String?      @db.Text
   autoReply     Boolean      @default(true)
+  isPaused      Boolean      @default(false)
   webhookUrl    String?
   lastConnected DateTime?
   createdAt     DateTime     @default(now())
