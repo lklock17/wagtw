@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.RadioButton
 import android.widget.RadioGroup
@@ -25,12 +26,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: PrefsManager
     private lateinit var etServerUrl: EditText
     private lateinit var etDeviceName: EditText
-    private lateinit var etPhoneNumber: EditText
-    private lateinit var rgWhatsAppType: RadioGroup
-    private lateinit var rbWaBusiness: RadioButton
-    private lateinit var rbWaPersonal: RadioButton
+    private lateinit var cbEnableBusiness: CheckBox
+    private lateinit var etBusinessPhone: EditText
+    private lateinit var cbEnablePersonal: CheckBox
+    private lateinit var etPersonalPhone: EditText
+
+    private lateinit var rgTestWhatsAppType: RadioGroup
+    private lateinit var rbTestBusiness: RadioButton
+    private lateinit var rbTestPersonal: RadioButton
     private lateinit var etTestPhone: EditText
     private lateinit var btnQuickTestSend: Button
+
     private lateinit var tvStatusBadge: TextView
     private lateinit var btnToggleConnect: Button
     private lateinit var btnPermissionNotif: Button
@@ -58,12 +64,17 @@ class MainActivity : AppCompatActivity() {
     private fun initViews() {
         etServerUrl = findViewById(R.id.etServerUrl)
         etDeviceName = findViewById(R.id.etDeviceName)
-        etPhoneNumber = findViewById(R.id.etPhoneNumber)
-        rgWhatsAppType = findViewById(R.id.rgWhatsAppType)
-        rbWaBusiness = findViewById(R.id.rbWaBusiness)
-        rbWaPersonal = findViewById(R.id.rbWaPersonal)
+        cbEnableBusiness = findViewById(R.id.cbEnableBusiness)
+        etBusinessPhone = findViewById(R.id.etBusinessPhone)
+        cbEnablePersonal = findViewById(R.id.cbEnablePersonal)
+        etPersonalPhone = findViewById(R.id.etPersonalPhone)
+
+        rgTestWhatsAppType = findViewById(R.id.rgTestWhatsAppType)
+        rbTestBusiness = findViewById(R.id.rbTestBusiness)
+        rbTestPersonal = findViewById(R.id.rbTestPersonal)
         etTestPhone = findViewById(R.id.etTestPhone)
         btnQuickTestSend = findViewById(R.id.btnQuickTestSend)
+
         tvStatusBadge = findViewById(R.id.tvStatusBadge)
         btnToggleConnect = findViewById(R.id.btnToggleConnect)
         btnPermissionNotif = findViewById(R.id.btnPermissionNotif)
@@ -75,13 +86,10 @@ class MainActivity : AppCompatActivity() {
     private fun loadSavedConfig() {
         etServerUrl.setText(prefs.serverUrl)
         etDeviceName.setText(prefs.deviceName)
-        etPhoneNumber.setText(prefs.phoneNumber)
-
-        if (prefs.waAppType == "REGULAR") {
-            rbWaPersonal.isChecked = true
-        } else {
-            rbWaBusiness.isChecked = true
-        }
+        etBusinessPhone.setText(prefs.businessPhone)
+        cbEnableBusiness.isChecked = prefs.isBusinessEnabled
+        etPersonalPhone.setText(prefs.personalPhone)
+        cbEnablePersonal.isChecked = prefs.isPersonalEnabled
 
         updateStatus(prefs.isServiceRunning)
     }
@@ -89,17 +97,13 @@ class MainActivity : AppCompatActivity() {
     private fun saveConfig() {
         prefs.serverUrl = etServerUrl.text.toString().trim()
         prefs.deviceName = etDeviceName.text.toString().trim()
-        prefs.phoneNumber = etPhoneNumber.text.toString().trim()
-        prefs.waAppType = if (rbWaPersonal.isChecked) "REGULAR" else "W4B"
+        prefs.businessPhone = etBusinessPhone.text.toString().trim()
+        prefs.isBusinessEnabled = cbEnableBusiness.isChecked
+        prefs.personalPhone = etPersonalPhone.text.toString().trim()
+        prefs.isPersonalEnabled = cbEnablePersonal.isChecked
     }
 
     private fun setupListeners() {
-        rgWhatsAppType.setOnCheckedChangeListener { _, checkedId ->
-            prefs.waAppType = if (checkedId == R.id.rbWaPersonal) "REGULAR" else "W4B"
-            val label = if (prefs.waAppType == "REGULAR") "WhatsApp Personal" else "WhatsApp Business"
-            Toast.makeText(this, "Target aplikasi: $label", Toast.LENGTH_SHORT).show()
-        }
-
         btnQuickTestSend.setOnClickListener {
             val phone = etTestPhone.text.toString().trim()
             if (phone.isEmpty()) {
@@ -107,7 +111,8 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             saveConfig()
-            AgentForegroundService.sendDirectTest(this, phone, "Halo! Ini pesan tes otomatis dari WAGTW Agent.")
+            val targetPkg = if (rbTestPersonal.isChecked) "com.whatsapp" else "com.whatsapp.w4b"
+            AgentForegroundService.sendDirectTest(this, phone, "Halo! Ini pesan tes otomatis dari WAGTW Agent.", targetPkg)
         }
 
         btnPermissionNotif.setOnClickListener {

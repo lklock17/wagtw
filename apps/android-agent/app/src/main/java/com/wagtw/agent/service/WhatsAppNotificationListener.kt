@@ -36,18 +36,24 @@ class WhatsAppNotificationListener : NotificationListenerService() {
 
         val prefs = PrefsManager(applicationContext)
         val serverUrl = prefs.serverUrl.trimEnd('/')
-        val deviceId = prefs.deviceId
+        val isBusiness = pkg == "com.whatsapp.w4b"
+        val targetDeviceId = if (isBusiness) {
+            prefs.businessDeviceId.ifEmpty { prefs.deviceId }
+        } else {
+            prefs.personalDeviceId.ifEmpty { prefs.deviceId }
+        }
 
-        Log.d("WAGTW_NOTIF", "WhatsApp incoming message from: $title | text: $text")
+        val appTag = if (isBusiness) "[WA Business]" else "[WA Personal]"
+        Log.d("WAGTW_NOTIF", "$appTag incoming message from: $title | text: $text")
 
         // Broadcast to local activity log
-        AgentForegroundService.appendLog("📥 Masuk dari $title: $text")
+        AgentForegroundService.appendLog("📥 $appTag dari $title: $text")
 
         // Send to WAGTW Server
         Thread {
             try {
                 val json = JSONObject().apply {
-                    put("deviceId", deviceId)
+                    put("deviceId", targetDeviceId)
                     put("sender", title)
                     put("text", text)
                     put("timestamp", System.currentTimeMillis())

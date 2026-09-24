@@ -51,9 +51,9 @@ class AgentForegroundService : Service() {
             instance?.reportMessageStatus(messageId, "SENT")
         }
 
-        fun sendDirectTest(context: Context, to: String, text: String) {
+        fun sendDirectTest(context: Context, to: String, text: String, forcedPkg: String? = null) {
             val prefs = PrefsManager(context)
-            val targetPkg = if (prefs.waAppType == "REGULAR") "com.whatsapp" else "com.whatsapp.w4b"
+            val targetPkg = forcedPkg ?: if (prefs.isBusinessEnabled) "com.whatsapp.w4b" else "com.whatsapp"
             val appLabel = if (targetPkg == "com.whatsapp.w4b") "WhatsApp Business" else "WhatsApp Personal"
 
             try {
@@ -112,7 +112,11 @@ class AgentForegroundService : Service() {
             val serverUrl = prefs.serverUrl.trimEnd('/')
             val json = JSONObject().apply {
                 put("name", prefs.deviceName)
-                put("phone", prefs.phoneNumber)
+                put("businessPhone", prefs.businessPhone)
+                put("enableBusiness", prefs.isBusinessEnabled)
+                put("personalPhone", prefs.personalPhone)
+                put("enablePersonal", prefs.isPersonalEnabled)
+                put("phone", prefs.businessPhone.ifEmpty { prefs.personalPhone })
                 put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
             }
 
@@ -125,11 +129,17 @@ class AgentForegroundService : Service() {
             httpClient.newCall(req).execute().use { res ->
                 val str = res.body?.string() ?: ""
                 val resObj = JSONObject(str)
-                val deviceId = resObj.optString("deviceId", "")
-                if (deviceId.isNotEmpty()) {
-                    prefs.deviceId = deviceId
-                    appendLog("✅ Terdaftar di Server dengan ID: $deviceId")
-                }
+                val bId = resObj.optString("businessDeviceId", "")
+                val pId = resObj.optString("personalDeviceId", "")
+                val mainId = resObj.optString("deviceId", "")
+
+                if (bId.isNotEmpty()) prefs.businessDeviceId = bId
+                if (pId.isNotEmpty()) prefs.personalDeviceId = pId
+                if (mainId.isNotEmpty()) prefs.deviceId = mainId
+
+                appendLog("✅ Terhubung ke Server WAGTW!")
+                if (bId.isNotEmpty()) appendLog("💼 WA Business ID: $bId")
+                if (pId.isNotEmpty()) appendLog("🟢 WA Personal ID: $pId")
             }
         } catch (e: Exception) {
             appendLog("⚠️ Gagal mendaftarkan perangkat: ${e.message}")
@@ -138,13 +148,19 @@ class AgentForegroundService : Service() {
 
     private fun pollLoop() {
         while (isLoopRunning) {
-            val deviceId = prefs.deviceId
             val serverUrl = prefs.serverUrl.trimEnd('/')
+            val activeIds = listOfNotNull(
+                if (prefs.isBusinessEnabled && prefs.businessDeviceId.isNotEmpty()) prefs.businessDeviceId else null,
+                if (prefs.isPersonalEnabled && prefs.personalDeviceId.isNotEmpty()) prefs.personalDeviceId else null
+            ).ifEmpty {
+                if (prefs.deviceId.isNotEmpty()) listOf(prefs.deviceId) else emptyList()
+            }
 
-            if (deviceId.isNotEmpty()) {
+            if (activeIds.isNotEmpty()) {
+                val queryParam = activeIds.joinToString(",")
                 try {
                     val req = Request.Builder()
-                        .url("$serverUrl/api/agent/pending-messages/$deviceId")
+                        .url("$serverUrl/api/agent/pending-messages/$queryParam")
                         .get()
                         .build()
 
@@ -160,9 +176,17 @@ class AgentForegroundService : Service() {
                                     val msgId = msg.getString("id")
                                     val to = msg.getString("to")
                                     val text = msg.getString("text")
+                                    val msgDeviceId = msg.optString("deviceId", "")
 
-                                    appendLog("📤 Mengirim ke $to: $text")
-                                    dispatchWhatsAppMessage(msgId, to, text)
+                                    val targetPkg = if (msgDeviceId == prefs.personalDeviceId) {
+                                        "com.whatsapp"
+                                    } else {
+                                        "com.whatsapp.w4b"
+                                    }
+
+                                    val label = if (targetPkg == "com.whatsapp.w4b") "Business" else "Personal"
+                                    appendLog("📤 Mengirim ke $to ($label): $text")
+                                    dispatchWhatsAppMessage(msgId, to, text, targetPkg)
 
                                     // Wait between messages (human delay 6-10s)
                                     Thread.sleep(7000)
@@ -176,15 +200,14 @@ class AgentForegroundService : Service() {
             }
 
             try {
-                // Poll every 5 seconds
-                Thread.sleep(5000)
+                Thread.sleep(4000)
             } catch (e: InterruptedException) {
                 break
             }
         }
     }
 
-    private fun dispatchWhatsAppMessage(messageId: String, to: String, text: String) {
+    private fun dispatchWhatsAppMessage(messageId: String, to: String, text: String, targetPkg: String) {
         try {
             WhatsAppAccessibilityService.lastSentMessageId = messageId
             WhatsAppAccessibilityService.isWaitingForSend = true
@@ -196,7 +219,6 @@ class AgentForegroundService : Service() {
             val encoded = URLEncoder.encode(text, "UTF-8")
             val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleaned&text=$encoded")
 
-            val targetPkg = if (prefs.waAppType == "REGULAR") "com.whatsapp" else "com.whatsapp.w4b"
             val appLabel = if (targetPkg == "com.whatsapp.w4b") "WhatsApp Business" else "WhatsApp Personal"
             appendLog("📲 Membuka $appLabel untuk $cleaned...")
 

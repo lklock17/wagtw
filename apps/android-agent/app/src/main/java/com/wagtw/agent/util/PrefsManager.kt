@@ -14,17 +14,44 @@ class PrefsManager(context: Context) {
         get() = prefs.getString("device_name", "HP Agen 1") ?: "HP Agen 1"
         set(value) = prefs.edit().putString("device_name", value).apply()
 
+    // Business Number
+    var businessPhone: String
+        get() = prefs.getString("business_phone", prefs.getString("phone_number", "") ?: "") ?: ""
+        set(value) = prefs.edit().putString("business_phone", value).apply()
+
+    var isBusinessEnabled: Boolean
+        get() = prefs.getBoolean("is_business_enabled", true)
+        set(value) = prefs.edit().putBoolean("is_business_enabled", value).apply()
+
+    var businessDeviceId: String
+        get() = prefs.getString("business_device_id", "") ?: ""
+        set(value) = prefs.edit().putString("business_device_id", value).apply()
+
+    // Personal Number
+    var personalPhone: String
+        get() = prefs.getString("personal_phone", "") ?: ""
+        set(value) = prefs.edit().putString("personal_phone", value).apply()
+
+    var isPersonalEnabled: Boolean
+        get() = prefs.getBoolean("is_personal_enabled", false)
+        set(value) = prefs.edit().putBoolean("is_personal_enabled", value).apply()
+
+    var personalDeviceId: String
+        get() = prefs.getString("personal_device_id", "") ?: ""
+        set(value) = prefs.edit().putString("personal_device_id", value).apply()
+
+    // Legacy / fallback
     var phoneNumber: String
-        get() = prefs.getString("phone_number", "") ?: ""
-        set(value) = prefs.edit().putString("phone_number", value).apply()
+        get() = businessPhone.ifEmpty { personalPhone }
+        set(value) {
+            businessPhone = value
+        }
 
     var deviceId: String
-        get() = prefs.getString("device_id", "") ?: ""
-        set(value) = prefs.edit().putString("device_id", value).apply()
-
-    var waAppType: String
-        get() = prefs.getString("wa_app_type", "W4B") ?: "W4B"
-        set(value) = prefs.edit().putString("wa_app_type", value).apply()
+        get() = businessDeviceId.ifEmpty { personalDeviceId }
+        set(value) {
+            businessDeviceId = value
+        }
 
     var isServiceRunning: Boolean
         get() = prefs.getBoolean("is_service_running", false)
