@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">WAGTW Agent</string>
+    <string name="accessibility_desc">Layanan ini memungkinkan WAGTW Agent mengirimkan pesan WhatsApp otomatis tanpa campur tangan manual.</string>
+</resources>

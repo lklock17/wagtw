@@ -1,0 +1,239 @@
+package com.wagtw.agent.service
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.wagtw.agent.util.PrefsManager
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
+
+class AgentForegroundService : Service() {
+
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .build()
+
+    private var isLoopRunning = false
+    private val handler = Handler(Looper.getMainLooper())
+    private lateinit var prefs: PrefsManager
+
+    companion object {
+        const val CHANNEL_ID = "wagtw_agent_channel"
+        const val NOTIFICATION_ID = 1001
+
+        var onLogReceived: ((String) -> Unit)? = null
+        var onStatusChanged: ((Boolean) -> Unit)? = null
+        private var instance: AgentForegroundService? = null
+
+        fun appendLog(text: String) {
+            Handler(Looper.getMainLooper()).post {
+                onLogReceived?.invoke(text)
+            }
+        }
+
+        fun notifyMessageSent(messageId: String) {
+            instance?.reportMessageStatus(messageId, "SENT")
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+        prefs = PrefsManager(applicationContext)
+        createNotificationChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val notification = createNotification("Menghubungkan ke Server WAGTW...")
+        startForeground(NOTIFICATION_ID, notification)
+
+        startAgentLoop()
+        return START_STICKY
+    }
+
+    private fun startAgentLoop() {
+        if (isLoopRunning) return
+        isLoopRunning = true
+
+        appendLog("🚀 Layanan latar belakang dimulai")
+        onStatusChanged?.invoke(true)
+
+        // Register device with server first
+        Thread {
+            registerDevice()
+            pollLoop()
+        }.start()
+    }
+
+    private fun registerDevice() {
+        try {
+            val serverUrl = prefs.serverUrl.trimEnd('/')
+            val json = JSONObject().apply {
+                put("name", prefs.deviceName)
+                put("phone", prefs.phoneNumber)
+                put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
+            }
+
+            val body = json.toString().toRequestBody("application/json".toMediaType())
+            val req = Request.Builder()
+                .url("$serverUrl/api/agent/register")
+                .post(body)
+                .build()
+
+            httpClient.newCall(req).execute().use { res ->
+                val str = res.body?.string() ?: ""
+                val resObj = JSONObject(str)
+                val deviceId = resObj.optString("deviceId", "")
+                if (deviceId.isNotEmpty()) {
+                    prefs.deviceId = deviceId
+                    appendLog("✅ Terdaftar di Server dengan ID: $deviceId")
+                }
+            }
+        } catch (e: Exception) {
+            appendLog("⚠️ Gagal mendaftarkan perangkat: ${e.message}")
+        }
+    }
+
+    private fun pollLoop() {
+        while (isLoopRunning) {
+            val deviceId = prefs.deviceId
+            val serverUrl = prefs.serverUrl.trimEnd('/')
+
+            if (deviceId.isNotEmpty()) {
+                try {
+                    val req = Request.Builder()
+                        .url("$serverUrl/api/agent/pending-messages/$deviceId")
+                        .get()
+                        .build()
+
+                    httpClient.newCall(req).execute().use { res ->
+                        if (res.isSuccessful) {
+                            val str = res.body?.string() ?: ""
+                            val resObj = JSONObject(str)
+                            val messages = resObj.optJSONArray("messages")
+
+                            if (messages != null && messages.length() > 0) {
+                                for (i in 0 until messages.length()) {
+                                    val msg = messages.getJSONObject(i)
+                                    val msgId = msg.getString("id")
+                                    val to = msg.getString("to")
+                                    val text = msg.getString("text")
+
+                                    appendLog("📤 Mengirim ke $to: $text")
+                                    dispatchWhatsAppMessage(msgId, to, text)
+
+                                    // Wait between messages (human delay 6-10s)
+                                    Thread.sleep(7000)
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("WAGTW_AGENT", "Poll error: ${e.message}")
+                }
+            }
+
+            try {
+                // Poll every 5 seconds
+                Thread.sleep(5000)
+            } catch (e: InterruptedException) {
+                break
+            }
+        }
+    }
+
+    private fun dispatchWhatsAppMessage(messageId: String, to: String, text: String) {
+        try {
+            WhatsAppAccessibilityService.lastSentMessageId = messageId
+            WhatsAppAccessibilityService.isWaitingForSend = true
+
+            // Clean number to digits
+            var cleaned = to.replace(Regex("[^0-9]"), "")
+            if (cleaned.startsWith("0")) cleaned = "62" + cleaned.substring(1)
+
+            val encoded = URLEncoder.encode(text, "UTF-8")
+            val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleaned&text=$encoded")
+
+            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                setPackage("com.whatsapp")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+
+            applicationContext.startActivity(intent)
+        } catch (e: Exception) {
+            appendLog("❌ Gagal membuka WhatsApp: ${e.message}")
+            reportMessageStatus(messageId, "FAILED", e.message)
+        }
+    }
+
+    fun reportMessageStatus(messageId: String, status: String, error: String? = null) {
+        Thread {
+            try {
+                val serverUrl = prefs.serverUrl.trimEnd('/')
+                val json = JSONObject().apply {
+                    put("messageId", messageId)
+                    put("status", status)
+                    if (error != null) put("error", error)
+                }
+
+                val body = json.toString().toRequestBody("application/json".toMediaType())
+                val req = Request.Builder()
+                    .url("$serverUrl/api/agent/message-status")
+                    .post(body)
+                    .build()
+
+                httpClient.newCall(req).execute().close()
+            } catch (e: Exception) {
+                Log.e("WAGTW_AGENT", "Report status error: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun createNotification(contentText: String): Notification {
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("WAGTW WhatsApp Agent")
+            .setContentText(contentText)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "WAGTW Service Channel",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        isLoopRunning = false
+        onStatusChanged?.invoke(false)
+        appendLog("🛑 Layanan dimatikan")
+        instance = null
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}

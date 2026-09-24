@@ -13,6 +13,7 @@ import statsRoutes from './stats.routes';
 import warmupRoutes from './warmup.routes';
 import telegramRoutes from './telegram.routes';
 import contactRoutes from './contact.routes';
+import agentRoutes from './agent.routes';
 import { authMiddleware } from '../middlewares/auth.middleware';
 
 import { welcomeDevice } from '../controllers/warmup.controller';
@@ -20,6 +21,7 @@ import { welcomeDevice } from '../controllers/warmup.controller';
 const router = Router();
 
 router.use('/auth', authRoutes);
+router.use('/agent', agentRoutes);
 router.post('/warmup/welcome-device', welcomeDevice);
 
 // Protected Routes
