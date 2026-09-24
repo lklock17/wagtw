@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { prisma } from '@wagtw/database';
+import { PERSONA_TEMPLATES, getRandomPersona, getPersonaById } from '../constants/personas';
 
 const DEFAULT_BASE_URL = 'http://103.89.2.102:20128/v1';
 const DEFAULT_API_KEY = 'sk-abf54a1d39290d81-l74lwh-ac3e8eda';
@@ -10,6 +11,7 @@ export class WarmupService {
   private static instance: WarmupService;
   private isProcessing = false;
   private nextRunTimestamp = 0;
+  private welcomedDevices: Map<string, number> = new Map(); // deviceId -> timestamp
 
   public static getInstance(): WarmupService {
     if (!WarmupService.instance) {
@@ -30,10 +32,15 @@ export class WarmupService {
           isEnabled: false,
           dailyTarget: 10,
           minDelayMinutes: 2,
+          minDelaySeconds: 5,
+          maxDelaySeconds: 15,
+          chatTurns: 3,
+          personaMode: 'random',
+          autoChatNewDevice: true,
           aiBaseUrl: DEFAULT_BASE_URL,
           aiApiKey: DEFAULT_API_KEY,
           aiModel: DEFAULT_MODEL,
-          topicPrompt: 'Kamu adalah pengguna WhatsApp di Indonesia. Ngobrol santai, natural, seperti teman akrab (gunakan bahasa gaul/santai Indonesia sehari-hari, singkat, tidak kaku, tidak seperti bot AI, gunakan singkatan umum seperti lg, udh, gmn, wkwk, dll). Nyambung dengan pesan lawan bicaramu.',
+          topicPrompt: PERSONA_TEMPLATES[0].prompt,
           deviceIds: []
         }
       });
@@ -59,6 +66,11 @@ export class WarmupService {
     isEnabled?: boolean;
     dailyTarget?: number;
     minDelayMinutes?: number;
+    minDelaySeconds?: number;
+    maxDelaySeconds?: number;
+    chatTurns?: number;
+    personaMode?: string;
+    autoChatNewDevice?: boolean;
     aiBaseUrl?: string;
     aiApiKey?: string;
     aiModel?: string;
@@ -67,16 +79,35 @@ export class WarmupService {
   }) {
     return await prisma.warmupConfig.upsert({
       where: { id: 'default' },
-      update: data,
+      update: {
+        isEnabled: data.isEnabled,
+        dailyTarget: data.dailyTarget ? Number(data.dailyTarget) : undefined,
+        minDelayMinutes: data.minDelayMinutes ? Number(data.minDelayMinutes) : undefined,
+        minDelaySeconds: data.minDelaySeconds ? Number(data.minDelaySeconds) : undefined,
+        maxDelaySeconds: data.maxDelaySeconds ? Number(data.maxDelaySeconds) : undefined,
+        chatTurns: data.chatTurns ? Number(data.chatTurns) : undefined,
+        personaMode: data.personaMode,
+        autoChatNewDevice: data.autoChatNewDevice,
+        aiBaseUrl: data.aiBaseUrl,
+        aiApiKey: data.aiApiKey,
+        aiModel: data.aiModel,
+        topicPrompt: data.topicPrompt,
+        deviceIds: data.deviceIds
+      },
       create: {
         id: 'default',
         isEnabled: data.isEnabled ?? false,
         dailyTarget: data.dailyTarget ?? 10,
         minDelayMinutes: data.minDelayMinutes ?? 2,
+        minDelaySeconds: data.minDelaySeconds ?? 5,
+        maxDelaySeconds: data.maxDelaySeconds ?? 15,
+        chatTurns: data.chatTurns ?? 3,
+        personaMode: data.personaMode ?? 'random',
+        autoChatNewDevice: data.autoChatNewDevice ?? true,
         aiBaseUrl: data.aiBaseUrl || DEFAULT_BASE_URL,
         aiApiKey: data.aiApiKey || DEFAULT_API_KEY,
         aiModel: data.aiModel || DEFAULT_MODEL,
-        topicPrompt: data.topicPrompt || 'Ngobrol santai natural bahasa Indonesia',
+        topicPrompt: data.topicPrompt || PERSONA_TEMPLATES[0].prompt,
         deviceIds: data.deviceIds || []
       }
     });
@@ -119,6 +150,25 @@ export class WarmupService {
     });
   }
 
+  resolveActivePersona(config: any): { id: string; name: string; prompt: string } {
+    if (!config.personaMode || config.personaMode === 'random') {
+      const rand = getRandomPersona();
+      return { id: 'random', name: `🎲 Acak: ${rand.name}`, prompt: rand.prompt };
+    }
+
+    const template = PERSONA_TEMPLATES.find((p) => p.id === config.personaMode);
+    if (template) {
+      return { id: template.id, name: template.name, prompt: template.prompt };
+    }
+
+    // Custom or fallback
+    return {
+      id: 'custom',
+      name: 'Kustom Prompt',
+      prompt: config.topicPrompt || PERSONA_TEMPLATES[0].prompt
+    };
+  }
+
   private async generateAIChat(
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
     config: any
@@ -142,7 +192,7 @@ export class WarmupService {
             Authorization: `Bearer ${key}`
           },
           timeout: 15000,
-          responseType: 'text' // 9routes might append 'data: [DONE]', handle gracefully
+          responseType: 'text'
         }
       );
 
@@ -165,7 +215,6 @@ export class WarmupService {
       return 'Halo bro, lagi santai nih. Gimana kabarmu hari ini?';
     } catch (error: any) {
       console.error('Error in AI completion:', error?.message);
-      // Fallback natural messages if AI endpoint has temporary hiccup
       const fallbacks = [
         'Halo bro, lg santai gak?',
         'Woi gmn kabarnya? Sehat kan?',
@@ -179,7 +228,10 @@ export class WarmupService {
     }
   }
 
-  async runWarmupPair(isManual = false) {
+  async runWarmupPair(
+    isManual = false,
+    options?: { fromDeviceId?: string; toDeviceId?: string; isWelcomeChat?: boolean }
+  ) {
     if (this.isProcessing) return { success: false, message: 'Warmup already in progress' };
     this.isProcessing = true;
 
@@ -189,30 +241,63 @@ export class WarmupService {
         return { success: false, message: 'Warmup is disabled' };
       }
 
-      // Find eligible connected devices
-      let connectedDevices = await prisma.device.findMany({
-        where: {
-          status: 'CONNECTED',
-          phoneNumber: { not: null }
+      let deviceA: any = null;
+      let deviceB: any = null;
+
+      if (options?.fromDeviceId && options?.toDeviceId) {
+        // Specific pair (e.g. welcoming new device)
+        deviceA = await prisma.device.findUnique({ where: { id: options.fromDeviceId } });
+        deviceB = await prisma.device.findUnique({ where: { id: options.toDeviceId } });
+
+        if (!deviceA || !deviceB || deviceA.status !== 'CONNECTED' || deviceB.status !== 'CONNECTED') {
+          return {
+            success: false,
+            message: 'Salah satu perangkat yang ditargetkan tidak dalam status CONNECTED.'
+          };
         }
-      });
+      } else {
+        // Automatic random selection
+        let connectedDevices = await prisma.device.findMany({
+          where: {
+            status: 'CONNECTED',
+            phoneNumber: { not: null }
+          }
+        });
 
-      // Filter by selected deviceIds if specified
-      if (config.deviceIds && config.deviceIds.length > 0) {
-        connectedDevices = connectedDevices.filter((d) => config.deviceIds.includes(d.id));
+        // Filter by selected deviceIds if specified
+        if (config.deviceIds && config.deviceIds.length > 0) {
+          connectedDevices = connectedDevices.filter((d) => config.deviceIds.includes(d.id));
+        }
+
+        if (connectedDevices.length < 2) {
+          return {
+            success: false,
+            message: `Minimal harus ada 2 device yang terhubung (CONNECTED). Saat ini terdeteksi: ${connectedDevices.length} device.`
+          };
+        }
+
+        const shuffled = [...connectedDevices].sort(() => 0.5 - Math.random());
+        deviceA = shuffled[0];
+        deviceB = shuffled[1];
       }
 
-      if (connectedDevices.length < 2) {
-        return {
-          success: false,
-          message: `Minimal harus ada 2 device yang terhubung (CONNECTED). Saat ini terdeteksi: ${connectedDevices.length} device.`
-        };
+      // Determine active persona
+      const persona = this.resolveActivePersona(config);
+      let systemPrompt = persona.prompt;
+
+      if (options?.isWelcomeChat) {
+        systemPrompt = `Kamu adalah kawan akrab di WhatsApp. Sambut hangat dan sapa kawanmu yang nomor barunya baru saja aktif. Katakan bahwa nomormu sudah kamu simpan, dan ajak ngobrol santai natural (bahasa gaul santai, pendek 1-2 baris, singkatan wajar).`;
       }
 
-      // Pick two random different devices
-      const shuffled = [...connectedDevices].sort(() => 0.5 - Math.random());
-      const deviceA = shuffled[0];
-      const deviceB = shuffled[1];
+      // Calculate turns and delays
+      const totalTurns = Math.max(2, Math.min(8, config.chatTurns || 3));
+      const minDelaySec = Math.max(3, config.minDelaySeconds || 5);
+      const maxDelaySec = Math.max(minDelaySec, config.maxDelaySeconds || 15);
+
+      const getRandomDelayMs = () => {
+        const sec = Math.floor(Math.random() * (maxDelaySec - minDelaySec + 1)) + minDelaySec;
+        return sec * 1000;
+      };
 
       // Retrieve recent conversation history between A and B
       const recentLogs = await prisma.warmupLog.findMany({
@@ -225,21 +310,18 @@ export class WarmupService {
         orderBy: { createdAt: 'desc' },
         take: 6
       });
-
       recentLogs.reverse();
-
-      const systemPrompt =
-        config.topicPrompt ||
-        'Kamu adalah pengguna WhatsApp di Indonesia. Ngobrol santai, natural, seperti teman akrab (bahasa gaul santai, 1-2 kalimat pendek, gunakan singkatan umum seperti lg, udh, gmn, wkwk, dll). Nyambung dengan topik pembicaraan.';
 
       const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
         { role: 'system', content: systemPrompt }
       ];
 
-      if (recentLogs.length === 0) {
+      if (recentLogs.length === 0 || options?.isWelcomeChat) {
         messages.push({
           role: 'user',
-          content: 'Mulai obrolan WhatsApp baru yang santai menyapa kawan.'
+          content: options?.isWelcomeChat
+            ? 'Sapa kawanmu yang baru ganti nomor atau nomor barunya baru aktif di WhatsApp.'
+            : 'Mulai obrolan WhatsApp baru yang santai menyapa kawan sesuai tema percakapan.'
         });
       } else {
         recentLogs.forEach((log) => {
@@ -250,14 +332,12 @@ export class WarmupService {
         });
         messages.push({
           role: 'user',
-          content: 'Balas pesan terakhir secara natural dan santai.'
+          content: 'Lanjutkan obrolan secara natural, santai, dan relevan dengan percakapan sebelumnya.'
         });
       }
 
-      // 1. Generate message for Device A
+      // --- Turn 1: Device A sends opening chat to Device B ---
       const msgTextA = await this.generateAIChat(messages, config);
-
-      // Send from Device A to Device B
       let sendSuccessA = false;
       let errorMsgA: string | undefined;
 
@@ -270,10 +350,9 @@ export class WarmupService {
         sendSuccessA = true;
       } catch (err: any) {
         errorMsgA = err.response?.data?.error || err.message;
-        console.error(`Failed to send warmup from ${deviceA.name} to ${deviceB.name}:`, errorMsgA);
+        console.error(`Failed to send warmup turn 1 from ${deviceA.name} to ${deviceB.name}:`, errorMsgA);
       }
 
-      // Log Device A's message
       const logA = await prisma.warmupLog.create({
         data: {
           fromDeviceId: deviceA.id,
@@ -286,57 +365,103 @@ export class WarmupService {
         }
       });
 
-      // 2. Schedule natural reply from Device B to Device A after delay
-      const delayMinutes = Math.max(1, config.minDelayMinutes || 2);
-      // add random jitter of ±15 seconds
-      const delayMs = (delayMinutes * 60 + (Math.floor(Math.random() * 30) - 15)) * 1000;
+      console.log(`🔥 [Warmup Turn 1/${totalTurns}] [${persona.name}] ${deviceA.name} -> ${deviceB.name}: "${msgTextA}"`);
 
-      setTimeout(async () => {
-        try {
-          const replyMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: msgTextA }
-          ];
+      // If opening message failed, stop session early
+      if (!sendSuccessA) {
+        return {
+          success: false,
+          message: `Gagal mengirim pesan pembuka: ${errorMsgA}`,
+          log: logA
+        };
+      }
 
-          const replyText = await this.generateAIChat(replyMessages, config);
+      // --- Subsequent Turns: Alternating replies with random second delays ---
+      let conversationTranscript: Array<{ fromId: string; toId: string; text: string }> = [
+        { fromId: deviceA.id, toId: deviceB.id, text: msgTextA }
+      ];
 
-          let replySuccess = false;
-          let replyError: string | undefined;
+      const scheduleTurn = (turnIndex: number, sender: any, receiver: any) => {
+        if (turnIndex > totalTurns) return;
 
+        const delayMs = getRandomDelayMs();
+        const delaySec = Math.round(delayMs / 1000);
+
+        setTimeout(async () => {
           try {
-            await axios.post(`${WORKER_URL}/messages/send`, {
-              deviceId: deviceB.id,
-              to: deviceA.phoneNumber,
-              text: replyText
-            });
-            replySuccess = true;
-          } catch (err: any) {
-            replyError = err.response?.data?.error || err.message;
-          }
-
-          await prisma.warmupLog.create({
-            data: {
-              fromDeviceId: deviceB.id,
-              toDeviceId: deviceA.id,
-              fromNumber: deviceB.phoneNumber,
-              toNumber: deviceA.phoneNumber,
-              message: replyText,
-              status: replySuccess ? 'SENT' : 'FAILED',
-              error: replyError
+            // Check if both devices are still connected
+            const currentSender = await prisma.device.findUnique({ where: { id: sender.id } });
+            const currentReceiver = await prisma.device.findUnique({ where: { id: receiver.id } });
+            if (currentSender?.status !== 'CONNECTED' || currentReceiver?.status !== 'CONNECTED') {
+              console.log(`[Warmup] Turn ${turnIndex} aborted: one of the devices disconnected.`);
+              return;
             }
-          });
 
-          console.log(`💬 Warmup reply sent from ${deviceB.name} to ${deviceA.name}: "${replyText}"`);
-        } catch (e: any) {
-          console.error('Error during scheduled warmup reply:', e.message);
-        }
-      }, delayMs);
+            const turnMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+              { role: 'system', content: systemPrompt }
+            ];
+
+            // Append last 4 messages in transcript for rich context
+            conversationTranscript.slice(-4).forEach((m) => {
+              turnMessages.push({
+                role: m.fromId === sender.id ? 'assistant' : 'user',
+                content: m.text
+              });
+            });
+
+            turnMessages.push({
+              role: 'user',
+              content: 'Balas pesan di atas dengan santai dan wajar seperti chatting di WhatsApp.'
+            });
+
+            const replyText = await this.generateAIChat(turnMessages, config);
+            let replySuccess = false;
+            let replyErr: string | undefined;
+
+            try {
+              await axios.post(`${WORKER_URL}/messages/send`, {
+                deviceId: sender.id,
+                to: receiver.phoneNumber,
+                text: replyText
+              });
+              replySuccess = true;
+            } catch (err: any) {
+              replyErr = err.response?.data?.error || err.message;
+            }
+
+            await prisma.warmupLog.create({
+              data: {
+                fromDeviceId: sender.id,
+                toDeviceId: receiver.id,
+                fromNumber: sender.phoneNumber,
+                toNumber: receiver.phoneNumber,
+                message: replyText,
+                status: replySuccess ? 'SENT' : 'FAILED',
+                error: replyErr
+              }
+            });
+
+            console.log(
+              `💬 [Warmup Turn ${turnIndex}/${totalTurns}] (Delay: ${delaySec}s) ${sender.name} -> ${receiver.name}: "${replyText}"`
+            );
+
+            if (replySuccess && turnIndex < totalTurns) {
+              conversationTranscript.push({ fromId: sender.id, toId: receiver.id, text: replyText });
+              // Next turn alternates: receiver becomes sender
+              scheduleTurn(turnIndex + 1, receiver, sender);
+            }
+          } catch (e: any) {
+            console.error(`Error in warmup turn ${turnIndex}:`, e.message);
+          }
+        }, delayMs);
+      };
+
+      // Kick off Turn 2 (Device B responds to Device A)
+      scheduleTurn(2, deviceB, deviceA);
 
       return {
-        success: sendSuccessA,
-        message: sendSuccessA
-          ? `Pesan pemanasan terkirim dari ${deviceA.name} (${deviceA.phoneNumber}) ke ${deviceB.name} (${deviceB.phoneNumber}). Balasan otomatis dijadwalkan dalam ~${delayMinutes} menit.`
-          : `Gagal mengirim pesan: ${errorMsgA}`,
+        success: true,
+        message: `Sesi pemanasan [${persona.name}] dimulai! Pesan pertama terkirim dari ${deviceA.name} ke ${deviceB.name}. Sesi ini dijadwalkan sebanyak ${totalTurns} balasan dengan jeda acak ${minDelaySec}-${maxDelaySec} detik.`,
         log: logA
       };
     } finally {
@@ -344,7 +469,65 @@ export class WarmupService {
     }
   }
 
-  // Cron tick called every 2 minutes
+  // Welcoming chat when a new device connects
+  async welcomeNewDevice(newDeviceId: string) {
+    try {
+      const config = await this.getConfig();
+      if (!config.isEnabled || !config.autoChatNewDevice) {
+        return { success: false, message: 'Warmup or auto-chat new device is disabled' };
+      }
+
+      // Avoid spamming if connection re-triggered within 30 minutes
+      const lastTime = this.welcomedDevices.get(newDeviceId) || 0;
+      if (Date.now() - lastTime < 30 * 60 * 1000) {
+        return { success: false, message: 'Device was recently greeted, skipping' };
+      }
+
+      const newDevice = await prisma.device.findUnique({ where: { id: newDeviceId } });
+      if (!newDevice || newDevice.status !== 'CONNECTED' || !newDevice.phoneNumber) {
+        return { success: false, message: 'New device not ready or not connected' };
+      }
+
+      // Find an established senior device that is CONNECTED and has phone number
+      const otherDevices = await prisma.device.findMany({
+        where: {
+          id: { not: newDeviceId },
+          status: 'CONNECTED',
+          phoneNumber: { not: null }
+        }
+      });
+
+      if (otherDevices.length === 0) {
+        console.log(`[Auto-Greet] No senior device available to greet newly connected device ${newDevice.name}`);
+        return { success: false, message: 'No other connected device available to greet' };
+      }
+
+      // Pick one senior device
+      const seniorDevice = otherDevices[Math.floor(Math.random() * otherDevices.length)];
+      this.welcomedDevices.set(newDeviceId, Date.now());
+
+      console.log(`🎉 [Auto-Greet] Welcoming newly connected device ${newDevice.name} (${newDevice.phoneNumber}) from ${seniorDevice.name}!`);
+
+      // Run welcoming warmup session after a 4-second initial breathing room
+      setTimeout(() => {
+        this.runWarmupPair(true, {
+          fromDeviceId: seniorDevice.id,
+          toDeviceId: newDevice.id,
+          isWelcomeChat: true
+        }).catch((err) => console.error('[Auto-Greet Error]:', err.message));
+      }, 4000);
+
+      return {
+        success: true,
+        message: `Penyambutan device baru dijadwalkan dari ${seniorDevice.name} ke ${newDevice.name}`
+      };
+    } catch (error: any) {
+      console.error('[welcomeNewDevice Error]:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Cron tick called every 1 minute
   async cronTick() {
     try {
       const config = await this.getConfig();
@@ -353,7 +536,7 @@ export class WarmupService {
       const now = Date.now();
       if (now < this.nextRunTimestamp) return;
 
-      // Count warmup messages sent today
+      // Count warmup sessions sent today
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
 
@@ -365,19 +548,20 @@ export class WarmupService {
       });
 
       const dailyTarget = config.dailyTarget || 10;
-      // Note: Each pair exchange produces 2 messages (A to B, then B to A).
-      // So dailyTarget represents total sessions or messages
-      if (todaySentCount >= dailyTarget * 2) {
+      const turns = config.chatTurns || 3;
+      const expectedMessagesToday = dailyTarget * turns;
+
+      if (todaySentCount >= expectedMessagesToday) {
         return; // Daily target reached
       }
 
-      // Schedule next run: 24h / dailyTarget with ±30% randomness
+      // Schedule next run: 24h / dailyTarget with ±25% randomness
       const avgIntervalMinutes = (24 * 60) / Math.max(1, dailyTarget);
-      const randomFactor = 0.7 + Math.random() * 0.6; // between 0.7 and 1.3
+      const randomFactor = 0.75 + Math.random() * 0.5; // between 0.75 and 1.25
       const intervalMs = avgIntervalMinutes * randomFactor * 60 * 1000;
       this.nextRunTimestamp = now + intervalMs;
 
-      console.log(`🔥 Executing scheduled warmup... (Today: ${todaySentCount}/${dailyTarget * 2})`);
+      console.log(`🔥 Executing scheduled warmup... (Today: ${todaySentCount}/${expectedMessagesToday} messages)`);
       await this.runWarmupPair(false);
     } catch (error: any) {
       console.error('Error in warmup cron tick:', error.message);

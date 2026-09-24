@@ -335,6 +335,16 @@ class WhatsAppManager {
 
     await this.updateDeviceStatus(deviceId, 'CONNECTED', null);
 
+    // Auto-warmup welcome greeting for newly connected device
+    try {
+      const apiUrl = process.env.API_URL || 'http://localhost:4010';
+      axios.post(`${apiUrl}/api/warmup/welcome-device`, { deviceId }).catch((err) => {
+        if (err.response?.status !== 404) {
+          console.log(`[Auto-Greet] Info on welcome-device for ${deviceId}:`, err.response?.data?.message || err.message);
+        }
+      });
+    } catch {}
+
     // Only send Telegram notification if:
     // 1) It is a brand-new pairing
     // 2) A DISCONNECTED alert was actually sent earlier to Telegram

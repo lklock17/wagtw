@@ -83,6 +83,7 @@ export const warmupService = {
   getConfig: () => api.get('/warmup/config'),
   updateConfig: (data: any) => api.post('/warmup/config', data),
   fetchModels: (baseUrl?: string, apiKey?: string) => api.post('/warmup/fetch-models', { baseUrl, apiKey }),
+  getPersonas: () => api.get('/warmup/personas'),
   getLogs: (limit = 50) => api.get(`/warmup/logs?limit=${limit}`),
   triggerManual: () => api.post('/warmup/trigger'),
 };

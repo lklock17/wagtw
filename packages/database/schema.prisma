@@ -189,17 +189,22 @@ model ScheduledMessage {
 }
 
 model WarmupConfig {
-  id               String   @id @default("default")
-  isEnabled        Boolean  @default(false)
-  dailyTarget      Int      @default(10) // target chats per day
-  minDelayMinutes  Int      @default(2)  // minimum delay in minutes
-  aiBaseUrl        String   @default("http://103.89.2.102:20128/v1")
-  aiApiKey         String   @default("sk-abf54a1d39290d81-l74lwh-ac3e8eda")
-  aiModel          String   @default("mistral/mistral-large-latest")
-  topicPrompt      String?  @db.Text
-  deviceIds        String[] @default([])
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                String   @id @default("default")
+  isEnabled         Boolean  @default(false)
+  dailyTarget       Int      @default(10) // target sessions per day
+  minDelayMinutes   Int      @default(2)  // legacy fallback
+  minDelaySeconds   Int      @default(5)  // minimum delay in seconds
+  maxDelaySeconds   Int      @default(15) // maximum delay in seconds
+  chatTurns         Int      @default(3)  // number of back-and-forth chats per session
+  personaMode       String   @default("random") // "random" or template id
+  autoChatNewDevice Boolean  @default(true) // auto-greet when new device connects
+  aiBaseUrl         String   @default("http://103.89.2.102:20128/v1")
+  aiApiKey          String   @default("sk-abf54a1d39290d81-l74lwh-ac3e8eda")
+  aiModel           String   @default("mistral/mistral-large-latest")
+  topicPrompt       String?  @db.Text
+  deviceIds         String[] @default([])
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 model WarmupLog {

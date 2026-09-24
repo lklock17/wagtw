@@ -15,9 +15,12 @@ import telegramRoutes from './telegram.routes';
 import contactRoutes from './contact.routes';
 import { authMiddleware } from '../middlewares/auth.middleware';
 
+import { welcomeDevice } from '../controllers/warmup.controller';
+
 const router = Router();
 
 router.use('/auth', authRoutes);
+router.post('/warmup/welcome-device', welcomeDevice);
 
 // Protected Routes
 router.use('/stats', authMiddleware, statsRoutes);

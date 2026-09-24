@@ -12,19 +12,30 @@ import {
   MessageSquare, 
   Sparkles, 
   AlertCircle,
-  HelpCircle
+  Dice5,
+  UserCheck,
+  Timer,
+  Layers,
+  HelpCircle,
+  Shuffle
 } from 'lucide-react';
 import { warmupService, deviceService } from '../services/api';
+import { PERSONA_TEMPLATES, PersonaTemplate } from '../constants/personas';
 
 export default function Warmup() {
   const [config, setConfig] = useState({
     isEnabled: false,
     dailyTarget: 10,
     minDelayMinutes: 2,
+    minDelaySeconds: 5,
+    maxDelaySeconds: 15,
+    chatTurns: 3,
+    personaMode: 'random',
+    autoChatNewDevice: true,
     aiBaseUrl: 'http://103.89.2.102:20128/v1',
     aiApiKey: 'sk-abf54a1d39290d81-l74lwh-ac3e8eda',
     aiModel: 'mistral/mistral-large-latest',
-    topicPrompt: 'Kamu adalah pengguna WhatsApp di Indonesia. Ngobrol santai, natural, seperti teman akrab (bahasa gaul santai, 1-2 kalimat pendek, gunakan singkatan umum seperti lg, udh, gmn, wkwk, dll). Nyambung dengan topik pembicaraan.',
+    topicPrompt: '',
     deviceIds: [] as string[]
   });
 
@@ -36,6 +47,7 @@ export default function Warmup() {
   const [fetchingModels, setFetchingModels] = useState(false);
   const [testing, setTesting] = useState(false);
   const [alert, setAlert] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [customPromptOpen, setCustomPromptOpen] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -51,12 +63,19 @@ export default function Warmup() {
       ]);
 
       if (configRes.data) {
-        setConfig((prev) => ({ ...prev, ...configRes.data }));
+        setConfig((prev) => ({
+          ...prev,
+          ...configRes.data,
+          minDelaySeconds: configRes.data.minDelaySeconds ?? 5,
+          maxDelaySeconds: configRes.data.maxDelaySeconds ?? 15,
+          chatTurns: configRes.data.chatTurns ?? 3,
+          personaMode: configRes.data.personaMode || 'random',
+          autoChatNewDevice: configRes.data.autoChatNewDevice !== undefined ? configRes.data.autoChatNewDevice : true
+        }));
       }
       setDevices(devRes.data || []);
       setLogs(logsRes.data || []);
       
-      // Auto-load available models if we have credentials
       if (configRes.data?.aiBaseUrl && configRes.data?.aiApiKey) {
         fetchModelsList(configRes.data.aiBaseUrl, configRes.data.aiApiKey);
       }
@@ -73,7 +92,6 @@ export default function Warmup() {
       const res = await warmupService.fetchModels(url || config.aiBaseUrl, key || config.aiApiKey);
       if (res.data?.models && Array.isArray(res.data.models)) {
         setModels(res.data.models);
-        // If current model not in list and list has items, retain or set default
         if (!config.aiModel && res.data.models.length > 0) {
           setConfig((prev) => ({ ...prev, aiModel: res.data.models[0] }));
         }
@@ -128,11 +146,10 @@ export default function Warmup() {
       const res = await warmupService.triggerManual();
       if (res.data?.success) {
         setAlert({ type: 'success', message: res.data.message });
-        // Refresh logs after brief delay
         setTimeout(async () => {
           const lRes = await warmupService.getLogs(30);
           setLogs(lRes.data || []);
-        }, 1500);
+        }, 2000);
       } else {
         setAlert({ type: 'error', message: res.data.message || 'Gagal menjalankan warmup' });
       }
@@ -156,8 +173,25 @@ export default function Warmup() {
     });
   };
 
+  const handleSelectPersona = (personaId: string) => {
+    if (personaId === 'random') {
+      setConfig((prev) => ({ ...prev, personaMode: 'random' }));
+    } else if (personaId === 'custom') {
+      setConfig((prev) => ({ ...prev, personaMode: 'custom' }));
+      setCustomPromptOpen(true);
+    } else {
+      const template = PERSONA_TEMPLATES.find((p) => p.id === personaId);
+      setConfig((prev) => ({
+        ...prev,
+        personaMode: personaId,
+        topicPrompt: template ? template.prompt : prev.topicPrompt
+      }));
+    }
+  };
+
   const connectedDevices = devices.filter((d) => d.status === 'CONNECTED');
   const selectedValidCount = (config.deviceIds || []).filter((id) => devices.some((d) => d.id === id)).length;
+  const currentPersona = PERSONA_TEMPLATES.find((p) => p.id === config.personaMode);
 
   return (
     <div className="space-y-8 animate-fade-in pb-12">
@@ -221,7 +255,7 @@ export default function Warmup() {
             )}
             <span>{alert.message}</span>
           </div>
-          <button onClick={() => setAlert(null)} className="text-slate-400 hover:text-slate-700 text-xs font-bold">
+          <button onClick={() => setAlert(null)} className="text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer">
             Tutup
           </button>
         </div>
@@ -248,18 +282,18 @@ export default function Warmup() {
           <div className="text-2xl font-black text-slate-900 tracking-tight">
             {config.dailyTarget} <span className="text-xs font-normal text-slate-500">sesi/hari</span>
           </div>
-          <p className="text-xs text-slate-500 mt-1">Terdistribusi acak 24/7</p>
+          <p className="text-xs text-slate-500 mt-1">~{config.dailyTarget * (config.chatTurns || 3)} pesan terdistribusi acak</p>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
           <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Jeda Antar Chat</span>
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Jeda Antar Balasan</span>
             <Sparkles className="w-4 h-4 text-indigo-500" />
           </div>
           <div className="text-2xl font-black text-slate-900 tracking-tight">
-            ~{config.minDelayMinutes} <span className="text-xs font-normal text-slate-500">menit</span>
+            {config.minDelaySeconds || 5}-{config.maxDelaySeconds || 15} <span className="text-xs font-normal text-slate-500">detik</span>
           </div>
-          <p className="text-xs text-slate-500 mt-1">Delay alami antar balasan</p>
+          <p className="text-xs text-slate-500 mt-1">Delay acak per balasan ({config.chatTurns || 3}x turn/sesi)</p>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
@@ -282,7 +316,7 @@ export default function Warmup() {
 
       {/* Main Settings Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left: 9routes AI Configuration */}
+        {/* Left: 9routes AI & Persona Templates */}
         <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs flex flex-col justify-between">
           <div className="space-y-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
@@ -291,8 +325,8 @@ export default function Warmup() {
                   <Bot className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 text-sm">Konfigurasi 9routes AI</h3>
-                  <p className="text-xs text-slate-400">Integrasi model bahasa untuk obrolan natural</p>
+                  <h3 className="font-bold text-slate-900 text-sm">Konfigurasi AI & Persona</h3>
+                  <p className="text-xs text-slate-400">Pilihan model dan template karakter percakapan</p>
                 </div>
               </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200/60">
@@ -346,7 +380,7 @@ export default function Warmup() {
                 <select
                   value={config.aiModel}
                   onChange={(e) => setConfig({ ...config, aiModel: e.target.value })}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all cursor-pointer"
                 >
                   {models.map((m) => (
                     <option key={m} value={m}>
@@ -366,36 +400,133 @@ export default function Warmup() {
                   <button
                     type="button"
                     onClick={() => fetchModelsList()}
-                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold"
+                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
                   >
                     Deteksi
                   </button>
                 </div>
               )}
-              <p className="text-[11px] text-slate-400 mt-1">
-                Tersedia {models.length} model dari 9routes (Rekomendasi: <code>mistral/mistral-large-latest</code>)
-              </p>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
-                Persona AI / Karakter Percakapan
-              </label>
-              <textarea
-                rows={3}
-                value={config.topicPrompt || ''}
-                onChange={(e) => setConfig({ ...config, topicPrompt: e.target.value })}
-                placeholder="Instruksi gaya bahasa percakapan..."
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all resize-none"
-              />
-              <p className="text-[11px] text-slate-400 mt-1">
-                AI akan saling membalas percakapan sesuai konteks kalimat sebelumnya secara natural.
-              </p>
+            {/* Persona Selection System */}
+            <div className="pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Persona AI / Karakter Percakapan</span>
+                </label>
+                <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200/50">
+                  {PERSONA_TEMPLATES.length} Template Siap Pakai
+                </span>
+              </div>
+
+              {/* Persona Mode Selector */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+                {/* Random Persona Option */}
+                <button
+                  type="button"
+                  onClick={() => handleSelectPersona('random')}
+                  className={`p-3 rounded-xl border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
+                    config.personaMode === 'random'
+                      ? 'bg-amber-500/10 border-amber-400 text-amber-950 ring-2 ring-amber-500/20 shadow-xs'
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100/80'
+                  }`}
+                >
+                  <div className="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5">
+                    <Shuffle className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold flex items-center gap-1">
+                      <span>🎲 Acak Tiap Hari & Sesi</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">
+                      Berganti template otomatis setiap hari agar topik obrolan selalu segar & bervariasi.
+                    </p>
+                  </div>
+                </button>
+
+                {/* Specific Persona Selector */}
+                <div className="relative">
+                  <select
+                    value={config.personaMode === 'random' ? '' : config.personaMode}
+                    onChange={(e) => handleSelectPersona(e.target.value)}
+                    className={`w-full h-full min-h-[64px] px-3 py-2 rounded-xl border text-xs font-medium focus:outline-none transition-all cursor-pointer ${
+                      config.personaMode !== 'random'
+                        ? 'bg-indigo-50/60 border-indigo-300 text-indigo-950 ring-2 ring-indigo-500/20'
+                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100/80'
+                    }`}
+                  >
+                    <option value="" disabled>
+                      -- Pilih Template Persona Spesifik --
+                    </option>
+                    {PERSONA_TEMPLATES.map((tmpl) => (
+                      <option key={tmpl.id} value={tmpl.id}>
+                        [{tmpl.category}] {tmpl.name}
+                      </option>
+                    ))}
+                    <option value="custom">✍️ Tulis Kustom Prompt Sendiri...</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Active Persona Banner / Preview */}
+              {config.personaMode === 'random' ? (
+                <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-200 text-xs text-amber-900 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                    <Dice5 className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Mode Rotasi Acak Aktif</span>
+                  </div>
+                  <p className="text-[11px] text-amber-700 leading-relaxed">
+                    Sistem akan memilih salah satu dari {PERSONA_TEMPLATES.length} template persona (Teman Gaul, Rekan Kantor, Reuni, Kuliner, Jual Beli, Olahraga, Liburan, Game, Ngopi, Kuliah, dsb) secara acak pada setiap sesi obrolan.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-800">
+                        {currentPersona ? currentPersona.name : 'Persona Kustom'}
+                      </span>
+                      {currentPersona && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-200 text-slate-700">
+                          {currentPersona.category}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      {currentPersona ? currentPersona.description : 'Prompt kustom yang ditentukan secara mandiri.'}
+                    </p>
+                  </div>
+
+                  {/* Toggle Custom Edit */}
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setCustomPromptOpen(!customPromptOpen)}
+                      className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                    >
+                      {customPromptOpen ? '▲ Tutup Editor Prompt' : '▼ Lihat / Edit Teks Prompt Detail'}
+                    </button>
+                  </div>
+
+                  {customPromptOpen && (
+                    <div>
+                      <textarea
+                        rows={3}
+                        value={config.topicPrompt || (currentPersona ? currentPersona.prompt : '')}
+                        onChange={(e) => setConfig({ ...config, topicPrompt: e.target.value })}
+                        placeholder="Instruksi gaya bahasa percakapan..."
+                        className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all resize-none"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Right: Rules & Target Devices */}
+        {/* Right: Rules, Turn Count, Delays in SECONDS & Target Devices */}
         <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs flex flex-col justify-between">
           <div className="space-y-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
@@ -405,7 +536,7 @@ export default function Warmup() {
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 text-sm">Jadwal & Aturan Pemanasan</h3>
-                  <p className="text-xs text-slate-400">Atur frekuensi dan pemilihan nomor WhatsApp</p>
+                  <p className="text-xs text-slate-400">Atur frekuensi obrolan, jumlah balasan, dan jeda detik</p>
                 </div>
               </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200/60">
@@ -413,10 +544,11 @@ export default function Warmup() {
               </span>
             </div>
 
+            {/* Target Chats & Turn Counts */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
-                  Target Chat Per Hari
+                  Target Sesi Per Hari
                 </label>
                 <div className="relative">
                   <input
@@ -427,28 +559,101 @@ export default function Warmup() {
                     onChange={(e) => setConfig({ ...config, dailyTarget: parseInt(e.target.value) || 10 })}
                     className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                   />
-                  <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-medium">kali / hari</span>
+                  <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-medium">sesi / hari</span>
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1">Dijalankan pada jam acak sepanjang 24 jam</p>
               </div>
 
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
-                  Jeda Antar Balasan (Delay)
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5 flex items-center gap-1">
+                  <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Jumlah Balasan Per Sesi</span>
                 </label>
                 <div className="relative">
                   <input
                     type="number"
-                    min={1}
-                    max={30}
-                    value={config.minDelayMinutes}
-                    onChange={(e) => setConfig({ ...config, minDelayMinutes: parseInt(e.target.value) || 2 })}
+                    min={2}
+                    max={8}
+                    value={config.chatTurns}
+                    onChange={(e) => setConfig({ ...config, chatTurns: parseInt(e.target.value) || 3 })}
                     className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                   />
-                  <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-medium">menit</span>
+                  <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-medium">kali chat</span>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1">Waktu jeda saat lawan bicara membalas</p>
+                <p className="text-[11px] text-slate-400 mt-1">Jumlah saut-sautan pesan dalam 1 percakapan (2-8x)</p>
               </div>
+            </div>
+
+            {/* Delay in SECONDS with Random Range */}
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <Timer className="w-4 h-4 text-emerald-600" />
+                  <span>Jeda Antar Balasan (Delay Acak dalam Detik)</span>
+                </label>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                  Satuan Detik
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Delay Minimal</label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min={3}
+                      max={60}
+                      value={config.minDelaySeconds}
+                      onChange={(e) => setConfig({ ...config, minDelaySeconds: parseInt(e.target.value) || 5 })}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    />
+                    <span className="absolute right-3 top-2 text-xs text-slate-400 font-medium">detik</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Delay Maksimal</label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min={config.minDelaySeconds || 5}
+                      max={120}
+                      value={config.maxDelaySeconds}
+                      onChange={(e) => setConfig({ ...config, maxDelaySeconds: parseInt(e.target.value) || 15 })}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    />
+                    <span className="absolute right-3 top-2 text-xs text-slate-400 font-medium">detik</span>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-500">
+                ⚡ <em>Setiap balasan akan menunggu secara acak antara <strong>{config.minDelaySeconds || 5} s/d {config.maxDelaySeconds || 15} detik</strong>, menyerupai kecepatan mengetik orang asli.</em>
+              </p>
+            </div>
+
+            {/* Auto-Greet New Device Toggle */}
+            <div className="p-4 rounded-2xl border border-slate-200 bg-white hover:border-emerald-200 transition-all">
+              <label className="flex items-start justify-between gap-3 cursor-pointer">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <UserCheck className="w-4 h-4 text-emerald-600" />
+                    <span className="text-xs font-bold text-slate-900">
+                      Sambut & Auto-Chat Device Baru yang Baru Connect
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Ketika ada device/nomor baru yang baru saja berhasil terhubung (CONNECTED), device senior yang sudah aktif akan <strong>langsung menyapa dan mengajak ngobrol</strong> nomor baru tersebut.
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={config.autoChatNewDevice}
+                  onChange={(e) => setConfig({ ...config, autoChatNewDevice: e.target.checked })}
+                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-5 w-5 shrink-0 mt-0.5 cursor-pointer"
+                />
+              </label>
             </div>
 
             {/* Target Devices Selection */}
@@ -462,7 +667,7 @@ export default function Warmup() {
                 </span>
               </div>
 
-              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
                 {devices.length === 0 ? (
                   <p className="text-xs text-slate-400 py-3 text-center">Belum ada perangkat terdaftar di sistem.</p>
                 ) : (
