@@ -26,7 +26,8 @@ export const deviceService = {
 };
 
 export const inboxService = {
-  getThreads: () => api.get('/inbox/threads'),
+  getThreads: (deviceId?: string) =>
+    api.get('/inbox/threads', { params: deviceId && deviceId !== 'all' ? { deviceId } : undefined }),
   getMessages: (threadId: string) => api.get(`/inbox/threads/${threadId}/messages`),
   markAsRead: (threadId: string) => api.post(`/inbox/threads/${threadId}/read`),
 };

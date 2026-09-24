@@ -549,8 +549,32 @@ class WhatsAppManager {
     client.onMessage(async (message) => {
       if (message.isGroupMsg) return; // Optional: handle group
 
-      // 1. Save to Inbox
-      if (!message.from || !message.body) return;
+      // 1. Ignore status broadcasts & empty messages
+      if (
+        !message.from || 
+        !message.body || 
+        message.from === 'status@broadcast' || 
+        (message as any).isStatus || 
+        message.from.startsWith('status@')
+      ) {
+        return;
+      }
+
+      // Extract sender contact name & formatted phone number if available
+      const senderMeta = (message as any).sender || {};
+      const contactName = 
+        senderMeta.name || 
+        senderMeta.pushname || 
+        (message as any).notifyName || 
+        (senderMeta.formattedName && !senderMeta.formattedName.includes('@') ? senderMeta.formattedName : null) || 
+        null;
+
+      let formattedNumber: string | null = null;
+      if (senderMeta.formattedName && /^\+?[0-9\s-]+$/.test(senderMeta.formattedName)) {
+        formattedNumber = senderMeta.formattedName;
+      } else if (message.from.endsWith('@c.us')) {
+        formattedNumber = `+${message.from.replace('@c.us', '')}`;
+      }
 
       const isImage = message.body.startsWith('/9j/') || message.body.startsWith('data:image/') || message.type === 'image';
       const snippet = isImage ? '📷 [Foto / Gambar]' : message.body;
@@ -564,12 +588,16 @@ class WhatsAppManager {
           }
         },
         update: {
+          contactName: contactName || undefined,
+          formattedNumber: formattedNumber || undefined,
           lastMessage: snippet,
           unreadCount: { increment: 1 }
         },
         create: {
           deviceId,
           remoteNumber: message.from,
+          contactName: contactName || undefined,
+          formattedNumber: formattedNumber || undefined,
           lastMessage: snippet,
           unreadCount: 1
         }

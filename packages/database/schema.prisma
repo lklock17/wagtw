@@ -112,15 +112,17 @@ model Client {
 }
 
 model InboxThread {
-  id           String   @id @default(cuid())
-  deviceId     String
-  device       Device   @relation(fields: [deviceId], references: [id])
-  remoteNumber String
-  lastMessage  String?  @db.Text
-  unreadCount  Int      @default(0)
-  updatedAt    DateTime @updatedAt
+  id              String   @id @default(cuid())
+  deviceId        String
+  device          Device   @relation(fields: [deviceId], references: [id])
+  remoteNumber    String
+  contactName     String?  // Saved contact name or pushname
+  formattedNumber String?  // Real phone number if available (e.g. +62 812...)
+  lastMessage     String?  @db.Text
+  unreadCount     Int      @default(0)
+  updatedAt       DateTime @updatedAt
 
-  messages     InboxMessage[]
+  messages        InboxMessage[]
 
   @@unique([deviceId, remoteNumber])
 }

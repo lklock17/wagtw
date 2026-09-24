@@ -12,8 +12,13 @@ export function normalizePhoneNumber(input: string): string {
   
   let cleaned = String(input).trim();
   
-  // If it's a group JID, preserve it
-  if (cleaned.includes('@g.us')) {
+  // If it's already a full WhatsApp JID, preserve it
+  if (
+    cleaned.includes('@g.us') || 
+    cleaned.includes('@lid') || 
+    cleaned.includes('@newsletter') ||
+    cleaned.includes('@s.whatsapp.net')
+  ) {
     return cleaned;
   }
 
@@ -36,9 +41,23 @@ export function normalizePhoneNumber(input: string): string {
 }
 
 export function formatToWhatsAppJid(input: string): string {
-  const normalized = normalizePhoneNumber(input);
+  if (!input) return '';
+  const trimmed = String(input).trim();
+
+  // If already a valid WhatsApp JID, preserve as is!
+  if (
+    trimmed.endsWith('@lid') ||
+    trimmed.endsWith('@g.us') ||
+    trimmed.endsWith('@newsletter') ||
+    trimmed.endsWith('@c.us') ||
+    trimmed.endsWith('@s.whatsapp.net')
+  ) {
+    return trimmed;
+  }
+
+  const normalized = normalizePhoneNumber(trimmed);
   if (!normalized) return '';
-  if (normalized.includes('@g.us') || normalized.includes('@c.us')) {
+  if (normalized.includes('@g.us') || normalized.includes('@c.us') || normalized.includes('@lid')) {
     return normalized;
   }
   return `${normalized}@c.us`;
