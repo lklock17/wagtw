@@ -98,8 +98,10 @@ async function processBulkJob(jobId: string) {
       });
     }
 
-    // Delay to avoid ban
-    await new Promise(resolve => setTimeout(resolve, job.delay * 1000));
+    // Humanized Dynamic Jitter Delay (delay + 1.5s - 5s random variation)
+    const baseDelayMs = Math.max(job.delay || 5, 2) * 1000;
+    const humanJitterMs = Math.floor(Math.random() * 3500) + 1500;
+    await new Promise(resolve => setTimeout(resolve, baseDelayMs + humanJitterMs));
   }
 
   await prisma.bulkJob.update({

@@ -73,12 +73,20 @@ app.post('/messages/send', async (req, res) => {
   const jid = formatToWhatsAppJid(to);
 
   try {
-    // Humanized typing simulation before sending text (1.2s - 2.0s)
+    // Humanized typing simulation before sending message
     try {
       if (typeof (client as any).startTyping === 'function') {
-        const typingDuration = Math.floor(Math.random() * 800) + 1200;
+        const textLen = (text || caption || '').length;
+        // ~35ms per character, clamped between 1500ms and 4500ms + random human jitter
+        const calculatedDuration = Math.min(Math.max(textLen * 35, 1500), 4500);
+        const randomJitter = Math.floor(Math.random() * 800);
+        const typingDuration = calculatedDuration + randomJitter;
+
         await (client as any).startTyping(jid, typingDuration);
         await new Promise((r) => setTimeout(r, typingDuration));
+        if (typeof (client as any).stopTyping === 'function') {
+          await (client as any).stopTyping(jid).catch(() => {});
+        }
       }
     } catch (tErr) {
       // Non-blocking

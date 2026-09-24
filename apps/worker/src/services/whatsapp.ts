@@ -276,9 +276,19 @@ class WhatsAppManager {
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--no-first-run',
-          '--no-zygote'
+          '--no-zygote',
+          '--disable-blink-features=AutomationControlled',
+          '--disable-infobars',
+          '--window-size=1280,800',
+          '--disable-features=IsolateOrigins,site-per-process'
         ],
       });
+
+      // Apply anti-detection stealth scripts to browser page
+      const page = (client as any).page;
+      if (page) {
+        await this.applyStealthScripts(page);
+      }
 
       // Verify device was not deleted from DB while browser was launching
       const stillExists = await prisma.device.findUnique({ where: { id: deviceId } });
@@ -885,6 +895,78 @@ class WhatsAppManager {
       console.log(`[returnToQrScreen] Switched WhatsApp Web back to QR code screen for ${deviceId}`);
     } catch (e: any) {
       console.warn(`[returnToQrScreen] Could not switch back to QR:`, e.message);
+    }
+  }
+
+  private async applyStealthScripts(page: any) {
+    try {
+      const desktopUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+      await page.setUserAgent(desktopUserAgent);
+
+      await page.evaluateOnNewDocument(() => {
+        // 1. Mask navigator.webdriver
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => undefined,
+          configurable: true,
+        });
+
+        // 2. Mock languages (Indonesian & English)
+        Object.defineProperty(navigator, 'languages', {
+          get: () => ['id-ID', 'id', 'en-US', 'en'],
+          configurable: true,
+        });
+
+        // 3. Mock window.chrome object so it looks like desktop Google Chrome
+        (window as any).chrome = {
+          app: {
+            isInstalled: false,
+            InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+            RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+          },
+          runtime: {
+            OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' },
+            OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' },
+            PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+            PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+            PlatformOs: { ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' },
+            RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' }
+          }
+        };
+
+        // 4. Mock plugins & mimeTypes
+        const mockPlugins = [
+          { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+          { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+          { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' }
+        ];
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => mockPlugins,
+          configurable: true,
+        });
+
+        // 5. Mock WebGL vendor & renderer (avoid SwiftShader / software renderer leak)
+        try {
+          const getParameter = WebGLRenderingContext.prototype.getParameter;
+          WebGLRenderingContext.prototype.getParameter = function(parameter: number) {
+            if (parameter === 37445) return 'Intel Inc.';
+            if (parameter === 37446) return 'Intel(R) Iris(TM) Plus Graphics 640';
+            return getParameter.apply(this, [parameter]);
+          };
+        } catch {}
+
+        // 6. Mock notification permission
+        if (window.Notification) {
+          try {
+            Object.defineProperty(Notification, 'permission', {
+              get: () => 'default',
+              configurable: true,
+            });
+          } catch {}
+        }
+      });
+      console.log(`[Stealth] Applied anti-detection fingerprinting & User-Agent to browser session.`);
+    } catch (e: any) {
+      console.warn(`[Stealth] Could not apply stealth scripts:`, e.message);
     }
   }
 
