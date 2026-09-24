@@ -75,7 +75,7 @@ export default function Devices() {
         const updated = (res.data || []).find((d: any) => d.id === prev.id);
         if (!updated) return null;
         if (updated.status === 'CONNECTED' && prev.status !== 'CONNECTED') {
-          setTimeout(() => setQrModalDevice(null), 3000);
+          setTimeout(() => setQrModalDevice(null), 2500);
         }
         return updated;
       });
@@ -538,7 +538,20 @@ export default function Devices() {
                   </button>
                 </div>
 
-                {connectTab === 'qr' ? (
+                {qrModalDevice.status === 'CONNECTED' ? (
+                  <div className="py-10 flex flex-col items-center justify-center gap-3 text-center">
+                    <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 shadow-sm animate-pulse">
+                      <Check className="w-8 h-8" />
+                    </div>
+                    <div>
+                      <h4 className="text-base font-bold text-slate-800">WhatsApp Berhasil Terhubung!</h4>
+                      <p className="text-xs text-slate-600 mt-1">
+                        Nomor HP: <strong className="font-mono text-emerald-700">+{qrModalDevice.phoneNumber}</strong>
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-1">Jendela ini akan tertutup otomatis...</p>
+                    </div>
+                  </div>
+                ) : connectTab === 'qr' ? (
                   qrModalDevice.qrCode ? (
                     <div className="space-y-5">
                       <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 inline-block shadow-inner">

@@ -385,17 +385,69 @@ class WhatsAppManager {
       console.log(`[Auto-Reconnect] Device ${deviceId} recovered within grace period. Disconnect alert canceled.`);
     }
 
-    await prisma.device.update({
-      where: { id: deviceId },
-      data: {
-        status: 'CONNECTED',
-        phoneNumber: resolvedPhone,
-        qrCode: null,
-        lastConnected: new Date()
+    // Check if device still exists in DB
+    const devExists = await prisma.device.findUnique({ where: { id: deviceId } });
+    if (!devExists) {
+      console.warn(`[handleConnectionSuccess] Device ${deviceId} (${sessionName}) no longer exists in DB. Closing session.`);
+      const activeClient = this.sessions.get(deviceId);
+      if (activeClient) {
+        try { await activeClient.close(); } catch {}
+        this.sessions.delete(deviceId);
       }
-    });
-    console.log(`✅ Device ${deviceId} [${sessionName}] confirmed CONNECTED! Phone: ${resolvedPhone}`);
-    this.authenticatedSessions.add(deviceId);
+      return;
+    }
+
+    // Release phone number from any other device record to prevent unique constraint collision!
+    try {
+      await prisma.device.updateMany({
+        where: {
+          phoneNumber: resolvedPhone,
+          id: { not: deviceId }
+        },
+        data: {
+          phoneNumber: null,
+          status: 'DISCONNECTED',
+          qrCode: null
+        }
+      });
+    } catch (e: any) {
+      console.warn(`[handleConnectionSuccess] Could not release conflicting phone number:`, e.message);
+    }
+
+    try {
+      await prisma.device.update({
+        where: { id: deviceId },
+        data: {
+          status: 'CONNECTED',
+          phoneNumber: resolvedPhone,
+          qrCode: null,
+          lastConnected: new Date()
+        }
+      });
+      console.log(`✅ Device ${deviceId} [${sessionName}] confirmed CONNECTED! Phone: ${resolvedPhone}`);
+      this.authenticatedSessions.add(deviceId);
+    } catch (dbErr: any) {
+      console.error(`[handleConnectionSuccess] Error updating status for ${deviceId}:`, dbErr.message);
+      try {
+        await prisma.device.updateMany({
+          where: { phoneNumber: resolvedPhone, id: { not: deviceId } },
+          data: { phoneNumber: null, status: 'DISCONNECTED' }
+        });
+        await prisma.device.update({
+          where: { id: deviceId },
+          data: {
+            status: 'CONNECTED',
+            phoneNumber: resolvedPhone,
+            qrCode: null,
+            lastConnected: new Date()
+          }
+        });
+        console.log(`✅ Device ${deviceId} [${sessionName}] confirmed CONNECTED on retry! Phone: ${resolvedPhone}`);
+        this.authenticatedSessions.add(deviceId);
+      } catch (retryErr: any) {
+        console.error(`[handleConnectionSuccess] Retry failed:`, retryErr.message);
+      }
+    }
 
     // Auto-warmup welcome greeting for newly connected device
     try {
