@@ -366,6 +366,14 @@ export default function Devices() {
                 return null;
               }
             })();
+            const agentTarget = (() => {
+              try {
+                const s = JSON.parse(device.sessionData || '{}');
+                return s.targetPackage || '';
+              } catch (e) {
+                return '';
+              }
+            })();
 
             return (
               <div 
@@ -381,8 +389,13 @@ export default function Devices() {
 
                     <div className="flex items-center gap-1.5">
                       {isAndroidAgent && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-200" title={agentModel || 'Android Agent'}>
-                          📱 {agentModel ? (agentModel.length > 18 ? agentModel.substring(0, 18) + '...' : agentModel) : 'Android Relay'}
+                        <span className={clsx(
+                          "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border",
+                          agentTarget === 'com.whatsapp.w4b' 
+                            ? "bg-sky-50 text-sky-700 border-sky-200" 
+                            : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        )} title={agentModel || 'Android Agent'}>
+                          {agentTarget === 'com.whatsapp.w4b' ? '💼 WA Business' : '🟢 WA Personal'}
                         </span>
                       )}
                       {device.isPaused && (
