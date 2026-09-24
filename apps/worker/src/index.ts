@@ -28,9 +28,9 @@ const handleSessionCreate = async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'deviceId is required' });
   }
 
-  // Non-blocking
-  waManager.createSession(id, name);
-  res.json({ message: 'Session initialization started', deviceId: id });
+  // Non-blocking sequential queue
+  waManager.enqueueSession(id, name, false);
+  res.json({ message: 'Session initialization queued', deviceId: id });
 };
 
 app.post('/sessions/:id', handleSessionCreate);

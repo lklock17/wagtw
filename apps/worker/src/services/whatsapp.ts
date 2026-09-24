@@ -28,20 +28,52 @@ class WhatsAppManager {
   private loggedOutDevices: Set<string> = new Set();
   private closingDevices: Set<string> = new Set();
 
+  private sessionQueue: Array<{ deviceId: string; sessionName: string; isAutoRecovery: boolean }> = [];
+  private isProcessingQueue: boolean = false;
+
   async init() {
     // 1. Start continuous auto-recovery background watcher
     this.startAutoRecoveryWatcher();
 
-    // 2. Restore sessions on worker boot for all paired devices with existing tokens sequentially
-    const devices = await prisma.device.findMany();
+    // 2. Queue paired devices sequentially one by one so CPU and memory stay healthy
+    const devices = await prisma.device.findMany({
+      where: { phoneNumber: { not: null } },
+      orderBy: { updatedAt: 'desc' }
+    });
+
     for (const device of devices) {
-      if (device.phoneNumber) {
-        console.log(`[Worker Init] Auto-restoring session for paired device: ${device.name} (${device.id})`);
-        this.createSession(device.id, device.name, true);
-        // Wait 8 seconds between launches so browsers don't compete for memory and CPU
-        await new Promise((r) => setTimeout(r, 8000));
-      }
+      console.log(`[Worker Init] Queueing paired device for connection: ${device.name} (${device.id})`);
+      this.enqueueSession(device.id, device.name, true);
     }
+  }
+
+  enqueueSession(deviceId: string, sessionName: string, isAutoRecovery = false) {
+    if (this.sessionQueue.some((item) => item.deviceId === deviceId) || this.inProgressSessions.has(deviceId)) {
+      return;
+    }
+    this.sessionQueue.push({ deviceId, sessionName, isAutoRecovery });
+    this.processQueue();
+  }
+
+  private async processQueue() {
+    if (this.isProcessingQueue) return;
+    this.isProcessingQueue = true;
+
+    while (this.sessionQueue.length > 0) {
+      const next = this.sessionQueue.shift();
+      if (!next) break;
+
+      try {
+        await this.createSession(next.deviceId, next.sessionName, next.isAutoRecovery);
+      } catch (err: any) {
+        console.error(`[SessionQueue] Error initializing ${next.sessionName}:`, err.message);
+      }
+
+      // 4-second breathing room between sessions so previous browser stabilizes
+      await new Promise((r) => setTimeout(r, 4000));
+    }
+
+    this.isProcessingQueue = false;
   }
 
   startAutoRecoveryWatcher() {
@@ -59,8 +91,8 @@ class WhatsAppManager {
   }
 
   private async checkAndRecoverDevices() {
-    // If a session is currently starting up, wait for it to finish before starting another
-    if (this.inProgressSessions.size > 0) return;
+    // If sessions are currently queuing or starting up, wait for them to finish
+    if (this.inProgressSessions.size > 0 || this.isProcessingQueue) return;
 
     const devices = await prisma.device.findMany();
 
@@ -93,7 +125,6 @@ class WhatsAppManager {
         // No client instance currently active in memory
         const lastAttempt = this.lastAttemptTime.get(device.id) || 0;
         if (Date.now() - lastAttempt < 90000) {
-          // At least 90s cooldown before retrying this device to keep server responsive
           continue;
         }
 
@@ -104,11 +135,10 @@ class WhatsAppManager {
           !this.loggedOutDevices.has(device.id) &&
           !this.closingDevices.has(device.id)
         ) {
-          console.log(`[AutoRecoveryWatcher] Found disconnected paired device: ${device.name} (${device.id}). Initiating auto-connect...`);
+          console.log(`[AutoRecoveryWatcher] Enqueueing disconnected paired device: ${device.name} (${device.id})...`);
           this.lastAttemptTime.set(device.id, Date.now());
           this.reconnectingDevices.add(device.id);
-          this.createSession(device.id, device.name, true);
-          // Only start 1 browser session per cycle to keep server smooth
+          this.enqueueSession(device.id, device.name, true);
           break;
         }
       }
@@ -201,7 +231,12 @@ class WhatsAppManager {
             // Disconnect SEMENTARA / Socket Glitch
             this.handleTemporaryDisconnect(deviceId, sessionName, statusSession);
           } else if (statusSession === 'autocloseCalled') {
-            // QR scan timeout (nobody scanned QR within 3 minutes) - no alert needed, avoid infinite loop!
+            // QR scan timeout - do NOT disconnect if device is already connected or has active session
+            const isConn = this.sessions.has(deviceId);
+            if (isConn) {
+              console.log(`[StatusFind] Device ${deviceId} (${sessionName}) received autocloseCalled but session is ACTIVE/CONNECTED. Ignoring.`);
+              return;
+            }
             console.log(`[StatusFind] Device ${deviceId} (${sessionName}) QR scan expired (autocloseCalled).`);
             this.closingDevices.add(deviceId);
             this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
@@ -215,8 +250,9 @@ class WhatsAppManager {
             setTimeout(() => this.closingDevices.delete(deviceId), 5000);
           }
         },
-        autoClose: 180000,
-        deviceSyncTimeout: 120000,
+        autoClose: 0, // Disabled: NEVER automatically close browser pages on a timer!
+        deviceSyncTimeout: 0,
+        waitForLogin: false, // Return client immediately, do not hang waiting for QR scan!
         headless: true,
         devtools: false,
         useChrome: false,
@@ -265,7 +301,7 @@ class WhatsAppManager {
           phoneNumber = rawWid.replace(/[^0-9]/g, '');
         }
       } catch (e) {
-        console.warn('Could not get wid directly:', e);
+        // Not yet logged in or needs QR
       }
 
       if (!phoneNumber) {
@@ -273,26 +309,28 @@ class WhatsAppManager {
           const info = await client.getHostDevice();
           phoneNumber = info?.wid?.user || (info as any)?.id?.user || (info as any)?.phoneNumber || null;
         } catch (e) {
-          console.warn('Could not get host device info:', e);
+          // Not yet logged in or needs QR
         }
       }
 
-      try {
-        const isNewPairing = Boolean(!stillExists.phoneNumber && phoneNumber);
-        await prisma.device.update({
-          where: { id: deviceId },
-          data: { 
-            status: 'CONNECTED',
-            phoneNumber: phoneNumber || undefined,
-            qrCode: null,
-            lastConnected: new Date()
-          }
-        });
-        console.log(`✅ Device ${deviceId} [${sessionName}] CONNECTED! Phone: ${phoneNumber || 'detected'}`);
+      if (phoneNumber) {
+        try {
+          const isNewPairing = Boolean(!stillExists.phoneNumber && phoneNumber);
+          await prisma.device.update({
+            where: { id: deviceId },
+            data: { 
+              status: 'CONNECTED',
+              phoneNumber: phoneNumber || undefined,
+              qrCode: null,
+              lastConnected: new Date()
+            }
+          });
+          console.log(`✅ Device ${deviceId} [${sessionName}] CONNECTED! Phone: ${phoneNumber || 'detected'}`);
 
-        await this.handleConnectionSuccess(deviceId, sessionName, phoneNumber, isNewPairing);
-      } catch (e: any) {
-        console.warn(`Could not save CONNECTED status in DB:`, e.message);
+          await this.handleConnectionSuccess(deviceId, sessionName, phoneNumber, isNewPairing);
+        } catch (e: any) {
+          console.warn(`Could not save CONNECTED status in DB:`, e.message);
+        }
       }
 
     } catch (error: any) {
