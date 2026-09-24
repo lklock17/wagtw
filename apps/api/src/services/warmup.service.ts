@@ -123,7 +123,7 @@ export class WarmupService {
         headers: {
           Authorization: `Bearer ${key}`
         },
-        timeout: 10000
+        timeout: 30000
       });
 
       if (response.data && Array.isArray(response.data.data)) {
@@ -191,7 +191,7 @@ export class WarmupService {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${key}`
           },
-          timeout: 15000,
+          timeout: 30000,
           responseType: 'text'
         }
       );
