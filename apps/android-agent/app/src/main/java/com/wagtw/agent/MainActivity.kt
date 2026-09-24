@@ -9,6 +9,8 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Button
 import android.widget.EditText
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -24,6 +26,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etServerUrl: EditText
     private lateinit var etDeviceName: EditText
     private lateinit var etPhoneNumber: EditText
+    private lateinit var rgWhatsAppType: RadioGroup
+    private lateinit var rbWaBusiness: RadioButton
+    private lateinit var rbWaPersonal: RadioButton
+    private lateinit var etTestPhone: EditText
+    private lateinit var btnQuickTestSend: Button
     private lateinit var tvStatusBadge: TextView
     private lateinit var btnToggleConnect: Button
     private lateinit var btnPermissionNotif: Button
@@ -52,6 +59,11 @@ class MainActivity : AppCompatActivity() {
         etServerUrl = findViewById(R.id.etServerUrl)
         etDeviceName = findViewById(R.id.etDeviceName)
         etPhoneNumber = findViewById(R.id.etPhoneNumber)
+        rgWhatsAppType = findViewById(R.id.rgWhatsAppType)
+        rbWaBusiness = findViewById(R.id.rbWaBusiness)
+        rbWaPersonal = findViewById(R.id.rbWaPersonal)
+        etTestPhone = findViewById(R.id.etTestPhone)
+        btnQuickTestSend = findViewById(R.id.btnQuickTestSend)
         tvStatusBadge = findViewById(R.id.tvStatusBadge)
         btnToggleConnect = findViewById(R.id.btnToggleConnect)
         btnPermissionNotif = findViewById(R.id.btnPermissionNotif)
@@ -64,6 +76,13 @@ class MainActivity : AppCompatActivity() {
         etServerUrl.setText(prefs.serverUrl)
         etDeviceName.setText(prefs.deviceName)
         etPhoneNumber.setText(prefs.phoneNumber)
+
+        if (prefs.waAppType == "REGULAR") {
+            rbWaPersonal.isChecked = true
+        } else {
+            rbWaBusiness.isChecked = true
+        }
+
         updateStatus(prefs.isServiceRunning)
     }
 
@@ -71,9 +90,26 @@ class MainActivity : AppCompatActivity() {
         prefs.serverUrl = etServerUrl.text.toString().trim()
         prefs.deviceName = etDeviceName.text.toString().trim()
         prefs.phoneNumber = etPhoneNumber.text.toString().trim()
+        prefs.waAppType = if (rbWaPersonal.isChecked) "REGULAR" else "W4B"
     }
 
     private fun setupListeners() {
+        rgWhatsAppType.setOnCheckedChangeListener { _, checkedId ->
+            prefs.waAppType = if (checkedId == R.id.rbWaPersonal) "REGULAR" else "W4B"
+            val label = if (prefs.waAppType == "REGULAR") "WhatsApp Personal" else "WhatsApp Business"
+            Toast.makeText(this, "Target aplikasi: $label", Toast.LENGTH_SHORT).show()
+        }
+
+        btnQuickTestSend.setOnClickListener {
+            val phone = etTestPhone.text.toString().trim()
+            if (phone.isEmpty()) {
+                Toast.makeText(this, "Masukkan nomor HP tujuan terlebih dahulu", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            saveConfig()
+            AgentForegroundService.sendDirectTest(this, phone, "Halo! Ini pesan tes otomatis dari WAGTW Agent.")
+        }
+
         btnPermissionNotif.setOnClickListener {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }

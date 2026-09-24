@@ -454,7 +454,7 @@ export default function Devices() {
                 {/* Action Footer */}
                 <div className="bg-slate-50/80 px-3.5 py-2 border-t border-slate-100 flex items-center justify-between gap-1.5">
                   <div className="flex items-center gap-1.5">
-                    {isConnected ? (
+                    {(isConnected || isAndroidAgent || device.phoneNumber) ? (
                       <>
                         <button 
                           onClick={() => {
@@ -462,9 +462,9 @@ export default function Devices() {
                             setTestPhone('');
                             setTestSentStatus(null);
                           }}
-                          className="inline-flex items-center gap-1 px-2 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-[11px] font-semibold transition-colors cursor-pointer"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs font-bold transition-all shadow-xs cursor-pointer"
                         >
-                          <SendIcon className="w-3 h-3" />
+                          <SendIcon className="w-3.5 h-3.5" />
                           <span>Kirim Tes</span>
                         </button>
 

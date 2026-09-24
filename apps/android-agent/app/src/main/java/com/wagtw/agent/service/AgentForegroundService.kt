@@ -50,6 +50,32 @@ class AgentForegroundService : Service() {
         fun notifyMessageSent(messageId: String) {
             instance?.reportMessageStatus(messageId, "SENT")
         }
+
+        fun sendDirectTest(context: Context, to: String, text: String) {
+            val prefs = PrefsManager(context)
+            val targetPkg = if (prefs.waAppType == "REGULAR") "com.whatsapp" else "com.whatsapp.w4b"
+            val appLabel = if (targetPkg == "com.whatsapp.w4b") "WhatsApp Business" else "WhatsApp Personal"
+
+            try {
+                WhatsAppAccessibilityService.lastSentMessageId = "test_${System.currentTimeMillis()}"
+                WhatsAppAccessibilityService.isWaitingForSend = true
+
+                var cleaned = to.replace(Regex("[^0-9]"), "")
+                if (cleaned.startsWith("0")) cleaned = "62" + cleaned.substring(1)
+
+                val encoded = URLEncoder.encode(text, "UTF-8")
+                val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleaned&text=$encoded")
+
+                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                    setPackage(targetPkg)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                context.startActivity(intent)
+                appendLog("🚀 Menjalankan tes kirim via $appLabel ke $cleaned")
+            } catch (e: Exception) {
+                appendLog("❌ Gagal membuka $appLabel: ${e.message}")
+            }
+        }
     }
 
     override fun onCreate() {
@@ -170,8 +196,12 @@ class AgentForegroundService : Service() {
             val encoded = URLEncoder.encode(text, "UTF-8")
             val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleaned&text=$encoded")
 
+            val targetPkg = if (prefs.waAppType == "REGULAR") "com.whatsapp" else "com.whatsapp.w4b"
+            val appLabel = if (targetPkg == "com.whatsapp.w4b") "WhatsApp Business" else "WhatsApp Personal"
+            appendLog("📲 Membuka $appLabel untuk $cleaned...")
+
             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                setPackage("com.whatsapp")
+                setPackage(targetPkg)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
 

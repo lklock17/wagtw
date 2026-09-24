@@ -7,7 +7,7 @@ class PrefsManager(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("wagtw_prefs", Context.MODE_PRIVATE)
 
     var serverUrl: String
-        get() = prefs.getString("server_url", "http://16.78.121.191:4010") ?: "http://16.78.121.191:4010"
+        get() = prefs.getString("server_url", "http://16.78.121.191") ?: "http://16.78.121.191"
         set(value) = prefs.edit().putString("server_url", value).apply()
 
     var deviceName: String
@@ -21,6 +21,10 @@ class PrefsManager(context: Context) {
     var deviceId: String
         get() = prefs.getString("device_id", "") ?: ""
         set(value) = prefs.edit().putString("device_id", value).apply()
+
+    var waAppType: String
+        get() = prefs.getString("wa_app_type", "W4B") ?: "W4B"
+        set(value) = prefs.edit().putString("wa_app_type", value).apply()
 
     var isServiceRunning: Boolean
         get() = prefs.getBoolean("is_service_running", false)
