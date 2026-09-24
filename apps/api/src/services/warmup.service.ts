@@ -286,7 +286,7 @@ export class WarmupService {
       let systemPrompt = persona.prompt;
 
       if (options?.isWelcomeChat) {
-        systemPrompt = `Kamu adalah kawan akrab di WhatsApp. Sambut hangat dan sapa kawanmu yang nomor barunya baru saja aktif. Katakan bahwa nomormu sudah kamu simpan, dan ajak ngobrol santai natural (bahasa gaul santai, pendek 1-2 baris, singkatan wajar).`;
+        systemPrompt = `PERAN PENTING: Kamu adalah nomor WhatsApp lama / kawan yang sudah aktif sebelumnya (${deviceA.name}). Kamu sedang mengirim pesan menyapa kawanmu yang nomor barunya (+${deviceB.phoneNumber || 'baru'}) baru saja aktif di WhatsApp. Tugasmu adalah menyapa nomor barunya dengan ramah dan santai (contoh: "Halo bro! Akhirnya nomormu yang baru ini aktif juga ya, udah ku-save nih kontak barumu! Lagi santai gak?"). DILARANG KERAS berkata seolah-olah kamu yang ganti nomor. Kamu adalah nomor lama yang menyapa. Gunakan bahasa gaul santai Indonesia sehari-hari, 1-2 kalimat pendek, singkatan wajar (lg, udh, gmn, wkwk).`;
       }
 
       // Calculate turns and delays
@@ -320,7 +320,7 @@ export class WarmupService {
         messages.push({
           role: 'user',
           content: options?.isWelcomeChat
-            ? 'Sapa kawanmu yang baru ganti nomor atau nomor barunya baru aktif di WhatsApp.'
+            ? `Kirimkan chat pembuka dari nomor lama ke kawanmu yang baru mengaktifkan nomor baru ini (+${deviceB.phoneNumber}). Sapa nomor barunya dan beri tahu bahwa kamu sudah menyimpan kontaknya.`
             : 'Mulai obrolan WhatsApp baru yang santai menyapa kawan sesuai tema percakapan.'
         });
       } else {
@@ -409,10 +409,17 @@ export class WarmupService {
               });
             });
 
-            turnMessages.push({
-              role: 'user',
-              content: 'Balas pesan di atas dengan santai dan wajar seperti chatting di WhatsApp.'
-            });
+            if (options?.isWelcomeChat && turnIndex === 2) {
+              turnMessages.push({
+                role: 'user',
+                content: `PERAN: Kamu adalah pemilik nomor baru ini (${sender.name}). Kawan lamamu baru saja menyapa nomor barumu. Balas sapaannya dengan santai dan senang (contoh: "Halo bro! Wkwk iya bener ini nomorku yang baru, makasih banyak udah di-save ya! Lagi santai nih, gimana kabarmu?").`
+              });
+            } else {
+              turnMessages.push({
+                role: 'user',
+                content: 'Balas pesan di atas dengan santai dan wajar seperti chatting di WhatsApp.'
+              });
+            }
 
             const replyText = await this.generateAIChat(turnMessages, config);
             let replySuccess = false;

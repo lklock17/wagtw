@@ -650,17 +650,20 @@ export default function Warmup() {
             </div>
 
             {/* Auto-Greet New Device Toggle */}
-            <div className="p-4 rounded-2xl border border-slate-200 bg-white hover:border-emerald-200 transition-all">
+            <div className="p-4 rounded-2xl border border-emerald-200/80 bg-emerald-50/30 hover:border-emerald-300 transition-all">
               <label className="flex items-start justify-between gap-3 cursor-pointer">
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <UserCheck className="w-4 h-4 text-emerald-600" />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <UserCheck className="w-4 h-4 text-emerald-600 shrink-0" />
                     <span className="text-xs font-bold text-slate-900">
-                      Sambut & Auto-Chat Device Baru yang Baru Connect
+                      Sapa Nomor Baru Otomatis
+                    </span>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      Nomor Lama ➔ Sapa Nomor Baru
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    Ketika ada device/nomor baru yang baru saja berhasil terhubung (CONNECTED), device senior yang sudah aktif akan <strong>langsung menyapa dan mengajak ngobrol</strong> nomor baru tersebut.
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    Ketika ada nomor baru yang baru saja terhubung (CONNECTED), <strong>nomor lama yang sudah aktif sebelumnya yang akan mengirim chat pertama kali</strong> untuk menyapa nomor baru tersebut (<strong>BUKAN</strong> nomor baru yang menyapa).
                   </p>
                 </div>
                 <input
