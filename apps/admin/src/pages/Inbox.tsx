@@ -10,6 +10,7 @@ import {
   ExternalLink, 
   CheckCheck,
   Smartphone,
+  ArrowLeft,
   X
 } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -137,9 +138,12 @@ export default function Inbox() {
   });
 
   return (
-    <div className="h-[calc(100vh-6.5rem)] flex gap-4 max-w-7xl mx-auto pb-4">
+    <div className="h-[calc(100vh-6.5rem)] flex gap-4 w-full pb-2 overflow-hidden">
       {/* Left Column: Chat Threads List */}
-      <div className="w-88 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col overflow-hidden shrink-0">
+      <div className={`
+        ${selectedChat ? 'hidden md:flex' : 'flex'}
+        w-full md:w-80 lg:w-[350px] xl:w-[380px] bg-white rounded-2xl border border-slate-200 shadow-xs flex-col overflow-hidden shrink-0
+      `}>
         {/* Search & Filter Bar */}
         <div className="p-3 border-b border-slate-100 space-y-2">
           <div className="flex items-center justify-between">
@@ -268,32 +272,44 @@ export default function Inbox() {
       </div>
 
       {/* Right Column: Chat Conversation View */}
-      <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col overflow-hidden">
+      <div className={`
+        ${!selectedChat ? 'hidden md:flex' : 'flex'}
+        flex-1 min-w-0 bg-white rounded-2xl border border-slate-200 shadow-xs flex-col overflow-hidden
+      `}>
         {selectedChat ? (
           <>
             {/* Chat Top Header */}
             {(() => {
               const info = getContactInfo(selectedChat.remoteNumber);
               return (
-                <div className="px-5 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/60">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold ${
+                <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/60">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {/* Mobile Back Button */}
+                    <button 
+                      onClick={() => setSelectedChat(null)}
+                      className="md:hidden p-1.5 -ml-1 text-slate-500 hover:text-slate-800 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                      title="Kembali ke daftar chat"
+                    >
+                      <ArrowLeft className="w-5 h-5" />
+                    </button>
+
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold shrink-0 ${
                       info.isChannel ? 'bg-purple-100 text-purple-700' : 'bg-emerald-100 text-emerald-700'
                     }`}>
                       {info.initial}
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-sm text-slate-900 leading-tight">
+                        <h3 className="font-bold text-sm text-slate-900 leading-tight truncate">
                           {info.title}
                         </h3>
                         {info.isChannel && (
-                          <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
+                          <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 shrink-0">
                             Saluran
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5 truncate">
                         <span>via {selectedChat.device?.name || 'Device'}</span>
                         <span>•</span>
                         <span className="font-mono">{selectedChat.remoteNumber}</span>
@@ -301,7 +317,7 @@ export default function Inbox() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 shrink-0">
                     <button 
                       onClick={() => fetchMessages(selectedChat.id)} 
                       className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
@@ -315,7 +331,7 @@ export default function Inbox() {
             })()}
 
             {/* Chat Messages Body */}
-            <div className="flex-1 bg-slate-100/60 p-5 space-y-3 overflow-y-auto flex flex-col">
+            <div className="flex-1 min-h-0 bg-slate-100/60 p-4 sm:p-5 space-y-3 overflow-y-auto flex flex-col">
               {messages.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center text-slate-400 text-xs">
                   Belum ada rekaman riwayat pesan.
