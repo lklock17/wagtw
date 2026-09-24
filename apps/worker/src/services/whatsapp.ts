@@ -347,6 +347,32 @@ class WhatsAppManager {
     phoneNumber?: string | null,
     isNewPairing = false
   ) {
+    let resolvedPhone = phoneNumber;
+    const client = this.sessions.get(deviceId);
+    if (!resolvedPhone && client) {
+      try {
+        const wid = await client.getWid();
+        if (wid) resolvedPhone = wid.replace(/[^0-9]/g, '');
+      } catch {}
+      if (!resolvedPhone) {
+        try {
+          const info = await client.getHostDevice();
+          resolvedPhone = info?.wid?.user || (info as any)?.id?.user || (info as any)?.phoneNumber || null;
+        } catch {}
+      }
+    }
+
+    if (!resolvedPhone) {
+      const dev = await prisma.device.findUnique({ where: { id: deviceId } });
+      resolvedPhone = dev?.phoneNumber || null;
+    }
+
+    // STRICT: Cannot mark CONNECTED without a confirmed phone number!
+    if (!resolvedPhone) {
+      console.log(`[handleConnectionSuccess] Device ${deviceId} (${sessionName}) has NO phone number yet. Waiting for QR scan.`);
+      return;
+    }
+
     this.loggedOutNotified.delete(deviceId);
     this.reconnectingDevices.delete(deviceId);
 
@@ -358,7 +384,16 @@ class WhatsAppManager {
       console.log(`[Auto-Reconnect] Device ${deviceId} recovered within grace period. Disconnect alert canceled.`);
     }
 
-    await this.updateDeviceStatus(deviceId, 'CONNECTED', null);
+    await prisma.device.update({
+      where: { id: deviceId },
+      data: {
+        status: 'CONNECTED',
+        phoneNumber: resolvedPhone,
+        qrCode: null,
+        lastConnected: new Date()
+      }
+    });
+    console.log(`✅ Device ${deviceId} [${sessionName}] confirmed CONNECTED! Phone: ${resolvedPhone}`);
 
     // Auto-warmup welcome greeting for newly connected device
     try {
@@ -374,10 +409,10 @@ class WhatsAppManager {
     // 1) It is a brand-new pairing
     // 2) A DISCONNECTED alert was actually sent earlier to Telegram
     if (isNewPairing) {
-      await this.sendAlert(deviceId, sessionName, 'CONNECTED', phoneNumber);
+      await this.sendAlert(deviceId, sessionName, 'CONNECTED', resolvedPhone);
     } else if (this.disconnectedAlertSent.has(deviceId)) {
       this.disconnectedAlertSent.delete(deviceId);
-      await this.sendAlert(deviceId, sessionName, 'RECONNECTED', phoneNumber);
+      await this.sendAlert(deviceId, sessionName, 'RECONNECTED', resolvedPhone);
     }
   }
 
@@ -577,7 +612,12 @@ class WhatsAppManager {
       if (state === 'CONNECTED') {
         await this.handleConnectionSuccess(deviceId, sessionName);
       } else if (state === 'UNPAIRED') {
-        await this.handleTrueLogout(deviceId, sessionName);
+        const dev = await prisma.device.findUnique({ where: { id: deviceId } });
+        if (dev && dev.phoneNumber) {
+          await this.handleTrueLogout(deviceId, sessionName);
+        } else {
+          console.log(`[onStateChange] Device ${deviceId} (${sessionName}) is awaiting initial QR scan (State: UNPAIRED). Preserving session.`);
+        }
       } else if (state === 'DISCONNECTED' || state === 'TIMEOUT' || state === 'UNLAUNCHED') {
         await this.handleTemporaryDisconnect(deviceId, sessionName, state);
       }
