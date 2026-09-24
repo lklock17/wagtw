@@ -46,6 +46,7 @@ export default function Devices() {
 
   // QR & Pairing Modal
   const [qrModalDevice, setQrModalDevice] = useState<any | null>(null);
+  const [justConnected, setJustConnected] = useState(false);
   const [connectTab, setConnectTab] = useState<'qr' | 'pairing'>('qr');
   const [pairingPhone, setPairingPhone] = useState('');
   const [pairingCode, setPairingCode] = useState<string | null>(null);
@@ -76,8 +77,13 @@ export default function Devices() {
         if (!prev) return null;
         const updated = (res.data || []).find((d: any) => d.id === prev.id);
         if (!updated) return null;
-        if (updated.status === 'CONNECTED' && prev.status !== 'CONNECTED') {
-          setTimeout(() => setQrModalDevice(null), 2500);
+        // Only trigger justConnected if device status CHANGED to CONNECTED and has valid phone number!
+        if (updated.status === 'CONNECTED' && prev.status !== 'CONNECTED' && updated.phoneNumber) {
+          setJustConnected(true);
+          setTimeout(() => {
+            setQrModalDevice(null);
+            setJustConnected(false);
+          }, 3000);
         }
         return updated;
       });
@@ -112,9 +118,10 @@ export default function Devices() {
 
   const handleConnect = async (device: any) => {
     setConnectingId(device.id);
+    setJustConnected(false);
     setQrModalDevice(device);
     setConnectTab('qr');
-    setPairingPhone('');
+    setPairingPhone(device.phoneNumber || '');
     setPairingCode(null);
     setPairingError(null);
     try {
@@ -561,16 +568,24 @@ export default function Devices() {
               </button>
             </div>
 
-            {qrModalDevice.status === 'CONNECTED' ? (
+            {justConnected ? (
               <div className="py-12 flex flex-col items-center gap-3">
                 <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center animate-bounce">
                   <Check className="w-8 h-8 stroke-[3]" />
                 </div>
                 <h4 className="text-lg font-bold text-slate-900">Berhasil Terhubung!</h4>
                 <p className="text-xs text-slate-500 font-mono">Nomor: +{qrModalDevice.phoneNumber}</p>
+                <p className="text-[11px] text-slate-400 mt-1">Jendela ini akan tertutup otomatis...</p>
               </div>
             ) : (
               <div>
+                {qrModalDevice.status === 'CONNECTED' && qrModalDevice.phoneNumber && (
+                  <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center justify-between">
+                    <span>Perangkat sedang aktif (+{qrModalDevice.phoneNumber})</span>
+                    <span className="text-[11px] text-emerald-600 font-medium">Bisa scan QR atau minta kode baru untuk ganti nomor</span>
+                  </div>
+                )}
+
                 {/* Method Tabs */}
                 <div className="flex border-b border-slate-200 mb-5">
                   <button
@@ -601,20 +616,7 @@ export default function Devices() {
                   </button>
                 </div>
 
-                {qrModalDevice.status === 'CONNECTED' ? (
-                  <div className="py-10 flex flex-col items-center justify-center gap-3 text-center">
-                    <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 shadow-sm animate-pulse">
-                      <Check className="w-8 h-8" />
-                    </div>
-                    <div>
-                      <h4 className="text-base font-bold text-slate-800">WhatsApp Berhasil Terhubung!</h4>
-                      <p className="text-xs text-slate-600 mt-1">
-                        Nomor HP: <strong className="font-mono text-emerald-700">+{qrModalDevice.phoneNumber}</strong>
-                      </p>
-                      <p className="text-[11px] text-slate-400 mt-1">Jendela ini akan tertutup otomatis...</p>
-                    </div>
-                  </div>
-                ) : connectTab === 'qr' ? (
+                {connectTab === 'qr' ? (
                   qrModalDevice.qrCode ? (
                     <div className="space-y-5">
                       <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 inline-block shadow-inner">
@@ -723,6 +725,15 @@ export default function Devices() {
                         {pairingCopied && (
                           <p className="text-[11px] font-bold text-emerald-700">Kode disalin ke clipboard!</p>
                         )}
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => { setPairingCode(null); setPairingError(null); }}
+                            className="text-xs text-slate-500 hover:text-slate-700 underline font-medium cursor-pointer"
+                          >
+                            Minta Kode Ulang / Ganti Nomor
+                          </button>
+                        </div>
                       </div>
                     )}
 

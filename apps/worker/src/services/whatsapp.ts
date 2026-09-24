@@ -862,21 +862,52 @@ class WhatsAppManager {
     if (cleaned.startsWith('0')) cleaned = '62' + cleaned.substring(1);
     else if (cleaned.startsWith('8')) cleaned = '62' + cleaned;
 
+    const localNumber = cleaned.startsWith('62') ? cleaned.substring(2) : cleaned;
+
     // Ensure the page has loaded the login interface or QR code
     try {
       await page.waitForSelector('canvas, [data-testid="link-device-phone-number-code-screen-link"], div[role="button"], span', { timeout: 12000 });
     } catch {}
 
+    // Ensure wa-js is injected into the page if not present
+    try {
+      const hasWpp = await page.evaluate(() => typeof (window as any).WPP !== 'undefined');
+      if (!hasWpp) {
+        const waJsPath = '/home/ubuntu/wagtw/node_modules/@wppconnect/wa-js/dist/wppconnect-wa.js';
+        await page.addScriptTag({ path: waJsPath }).catch(() => null);
+      }
+    } catch (e: any) {
+      console.warn(`[requestPairingCode] Notice injecting WA-JS:`, e.message);
+    }
+
     // Method 1: Try WPP wa-js API directly
     try {
       const wppResult = await page.evaluate(async (phone: string) => {
         const wpp = (window as any).WPP;
-        if (wpp && wpp.conn) {
+        if (!wpp) return null;
+
+        // Wait for webpack module if needed
+        if (wpp.webpack && !wpp.webpack.isReady) {
+          await new Promise((resolve) => {
+            if (wpp.webpack?.onReady) {
+              wpp.webpack.onReady(resolve);
+            } else {
+              setTimeout(resolve, 2500);
+            }
+          });
+        }
+
+        if (wpp.conn) {
           if (typeof wpp.conn.genLinkDeviceCodeForPhoneNumber === 'function') {
             return await wpp.conn.genLinkDeviceCodeForPhoneNumber(phone);
           }
           if (typeof wpp.conn.startLinkDeviceCodeForPhoneNumber === 'function') {
-            return await wpp.conn.startLinkDeviceCodeForPhoneNumber(phone);
+            await wpp.conn.startLinkDeviceCodeForPhoneNumber(phone);
+            for (let i = 0; i < 20; i++) {
+              await new Promise((r) => setTimeout(r, 400));
+              const c = wpp.conn.getLinkDeviceCode?.();
+              if (c && typeof c === 'string' && c.length >= 8) return c;
+            }
           }
         }
         return null;
@@ -891,88 +922,110 @@ class WhatsAppManager {
     }
 
     // Method 2: Fallback to UI Automation
-    const code = await page.evaluate(async (phone: string) => {
+    try {
       // 1. Look for the "Link with phone number" button
-      const allSpans = Array.from(document.querySelectorAll('span, div[role="button"], button, a'));
-      const linkButton = allSpans.find((el: any) => {
-        const txt = (el.textContent || '').toLowerCase();
-        return txt.includes('link with phone number') || 
-               txt.includes('tautkan dengan nomor telepon') ||
-               txt.includes('link with phone') ||
-               txt.includes('tautkan dengan nomor') ||
-               txt.includes('nomor telepon saja');
-      });
+      await page.evaluate(() => {
+        const allSpans = Array.from(document.querySelectorAll('span, div[role="button"], button, a, [data-testid*="link"]'));
+        const linkButton = allSpans.find((el: any) => {
+          const txt = (el.textContent || '').toLowerCase();
+          return txt.includes('link with phone') || 
+                 txt.includes('tautkan dengan nomor') ||
+                 txt.includes('nomor telepon saja') ||
+                 el.getAttribute('data-testid') === 'link-device-phone-number-code-screen-link';
+        });
 
-      if (linkButton) {
-        (linkButton as HTMLElement).click();
-      }
+        if (linkButton) {
+          (linkButton as HTMLElement).click();
+        }
+      });
 
       await new Promise((r) => setTimeout(r, 1200));
 
-      // 2. Find phone input
-      const inputs = Array.from(document.querySelectorAll('input'));
-      const phoneInput = inputs.find((i: any) => 
-        i.type === 'text' || 
-        i.getAttribute('aria-label')?.toLowerCase().includes('phone') || 
-        i.getAttribute('aria-label')?.toLowerCase().includes('telepon') || 
-        i.getAttribute('data-testid')?.toLowerCase().includes('phone') ||
-        i.inputMode === 'numeric'
-      ) || inputs[inputs.length - 1];
+      // 2. Find phone input & fill with localNumber (if country code +62 is already active) or cleaned
+      await page.evaluate((fullPhone: string, localPhone: string) => {
+        const inputs = Array.from(document.querySelectorAll('input'));
+        const phoneInput = inputs.find((i: any) => 
+          i.type === 'text' || 
+          i.getAttribute('aria-label')?.toLowerCase().includes('phone') || 
+          i.getAttribute('aria-label')?.toLowerCase().includes('telepon') || 
+          i.getAttribute('data-testid')?.toLowerCase().includes('phone') ||
+          i.inputMode === 'numeric'
+        ) || inputs[inputs.length - 1];
 
-      if (phoneInput) {
-        phoneInput.focus();
-        phoneInput.value = '';
-        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-        if (nativeSetter) {
-          nativeSetter.call(phoneInput, phone);
-        } else {
-          phoneInput.value = phone;
+        if (phoneInput) {
+          const parentText = phoneInput.closest('div[role="region"], form, div')?.textContent || '';
+          const has62 = parentText.includes('+62') || parentText.includes('Indonesia');
+          const valueToSet = has62 ? localPhone : fullPhone;
+
+          phoneInput.focus();
+          phoneInput.value = '';
+          const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+          if (nativeSetter) {
+            nativeSetter.call(phoneInput, valueToSet);
+          } else {
+            phoneInput.value = valueToSet;
+          }
+          phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
+          phoneInput.dispatchEvent(new Event('change', { bubbles: true }));
         }
-        phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
-        phoneInput.dispatchEvent(new Event('change', { bubbles: true }));
-      }
+      }, cleaned, localNumber);
 
       await new Promise((r) => setTimeout(r, 800));
 
-      // 3. Click Next button
-      const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
-      const nextBtn = buttons.find((b: any) => {
-        const txt = (b.textContent || '').toLowerCase().trim();
-        return txt === 'next' || txt === 'lanjut' || txt === 'lanjutkan';
+      // 3. Click Next / Lanjut button
+      await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('button, div[role="button"]'));
+        const nextBtn = buttons.find((b: any) => {
+          const txt = (b.textContent || '').toLowerCase().trim();
+          return txt === 'next' || txt === 'lanjut' || txt === 'lanjutkan' || (b as any).type === 'submit';
+        });
+
+        if (nextBtn) {
+          (nextBtn as HTMLElement).click();
+        }
       });
 
-      if (nextBtn) {
-        (nextBtn as HTMLElement).click();
-      }
+      // 4. Poll for 8-char code display (up to 15 seconds)
+      for (let attempt = 0; attempt < 25; attempt++) {
+        await new Promise((r) => setTimeout(r, 600));
 
-      // 4. Poll for 8-char code display (up to 8 seconds)
-      for (let attempt = 0; attempt < 16; attempt++) {
-        await new Promise((r) => setTimeout(r, 500));
-
-        // Check elements with 8-character pairing code format (e.g. ABCD-1234 or 8 digits)
-        const allElements = Array.from(document.querySelectorAll('div, span, p, [data-testid*="code"], [data-testid*="pairing"]'));
-        for (const el of allElements) {
-          const text = (el.textContent || '').trim();
-          if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(text)) {
-            return text;
+        const uiCode = await page.evaluate(() => {
+          // Check elements with 8-character pairing code format (e.g. ABCD-1234 or 8 digits)
+          const allElements = Array.from(document.querySelectorAll('div, span, p, [data-testid*="code"], [data-testid*="pairing"]'));
+          for (const el of allElements) {
+            const text = (el.textContent || '').trim();
+            if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(text)) {
+              return text;
+            }
           }
-        }
 
-        const codeChars = Array.from(document.querySelectorAll('div[data-testid*="code"], div[aria-label*="code"], span'))
-          .filter((el: any) => /^[A-Z0-9]{4}-[A-Z0-9]{4}$|^[A-Z0-9]{8}$/.test((el.textContent || '').trim()));
+          const codeChars = Array.from(document.querySelectorAll('div[data-testid*="code"], div[aria-label*="code"], span'))
+            .filter((el: any) => /^[A-Z0-9]{4}-[A-Z0-9]{4}$|^[A-Z0-9]{8}$/.test((el.textContent || '').trim()));
 
-        if (codeChars.length > 0) {
-          return codeChars[0].textContent?.trim();
+          if (codeChars.length > 0) {
+            return codeChars[0].textContent?.trim() || null;
+          }
+
+          const charBoxes = Array.from(document.querySelectorAll('[data-testid*="code"] span, [aria-label*="code"] span'))
+            .map((s: any) => (s.textContent || '').trim())
+            .filter((s: string) => s.length === 1 && /^[A-Z0-9]$/.test(s));
+          if (charBoxes.length === 8) {
+            return `${charBoxes.slice(0, 4).join('')}-${charBoxes.slice(4).join('')}`;
+          }
+
+          return null;
+        });
+
+        if (uiCode) {
+          console.log(`[requestPairingCode] Successfully retrieved pairing code via UI for ${deviceId}: ${uiCode}`);
+          return uiCode;
         }
       }
-
-      return null;
-    }, cleaned);
-
-    if (!code) {
-      throw new Error('Gagal mendapatkan Pairing Code dari WhatsApp Web. Pastikan nomor benar atau gunakan Scan QR.');
+    } catch (uiErr: any) {
+      console.warn(`[requestPairingCode] UI simulation error:`, uiErr.message);
     }
-    return code;
+
+    throw new Error('Gagal mendapatkan Pairing Code dari WhatsApp Web. Pastikan nomor benar atau gunakan Scan QR Code.');
   }
 
   async logout(deviceId: string) {
