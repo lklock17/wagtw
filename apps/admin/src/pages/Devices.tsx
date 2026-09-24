@@ -297,7 +297,7 @@ export default function Devices() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {devices.map((device: any) => {
             const isConnected = device.status === 'CONNECTED';
             const isQR = device.status === 'QR_READY';
@@ -306,46 +306,46 @@ export default function Devices() {
             return (
               <div 
                 key={device.id} 
-                className="bg-white rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between overflow-hidden"
+                className="bg-white rounded-xl border border-slate-200/80 shadow-xs hover:shadow-sm hover:border-slate-300 transition-all duration-150 flex flex-col justify-between overflow-hidden"
               >
-                <div className="p-6">
+                <div className="p-4">
                   {/* Top Bar */}
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="w-12 h-12 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-600">
-                      <Smartphone className="w-6 h-6 text-slate-700" />
+                  <div className="flex justify-between items-center mb-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-600">
+                      <Smartphone className="w-4 h-4 text-slate-700" />
                     </div>
 
-                    <div className="flex flex-col items-end gap-1.5">
+                    <span className={clsx(
+                      "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                      isConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60" :
+                      isQR ? "bg-blue-50 text-blue-700 border border-blue-200/60 animate-pulse" :
+                      isConnecting ? "bg-indigo-50 text-indigo-700 border border-indigo-200/60 animate-pulse" :
+                      "bg-slate-100 text-slate-600 border border-slate-200"
+                    )}>
                       <span className={clsx(
-                        "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider",
-                        isConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60" :
-                        isQR ? "bg-blue-50 text-blue-700 border border-blue-200/60 animate-pulse" :
-                        isConnecting ? "bg-indigo-50 text-indigo-700 border border-indigo-200/60 animate-pulse" :
-                        "bg-slate-100 text-slate-600 border border-slate-200"
-                      )}>
-                        <span className={clsx(
-                          "w-1.5 h-1.5 rounded-full",
-                          isConnected ? "bg-emerald-500" :
-                          isQR ? "bg-blue-500" :
-                          isConnecting ? "bg-indigo-500" :
-                          "bg-slate-400"
-                        )}></span>
-                        {device.status}
-                      </span>
-                    </div>
+                        "w-1.5 h-1.5 rounded-full",
+                        isConnected ? "bg-emerald-500" :
+                        isQR ? "bg-blue-500" :
+                        isConnecting ? "bg-indigo-500" :
+                        "bg-slate-400"
+                      )}></span>
+                      {device.status}
+                    </span>
                   </div>
 
                   {/* Device Info */}
-                  <h3 className="text-lg font-bold text-slate-900 truncate">{device.name}</h3>
-                  <div className="flex items-center gap-2 mt-1 mb-4 text-xs font-medium text-slate-500">
+                  <h3 className="text-sm font-bold text-slate-900 truncate" title={device.name}>
+                    {device.name}
+                  </h3>
+                  <div className="flex items-center gap-1.5 mt-0.5 mb-2.5 text-[11px] text-slate-500">
                     <span>Nomor:</span>
-                    <span className="font-semibold text-slate-800">
+                    <span className="font-semibold text-slate-800 font-mono">
                       {device.phoneNumber ? `+${device.phoneNumber}` : 'Belum Terhubung'}
                     </span>
                   </div>
 
                   {/* Webhook & Features Pill */}
-                  <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
+                  <div className="flex flex-wrap gap-1.5 pt-2 border-t border-slate-100">
                     <button 
                       onClick={() => {
                         setWebhookDevice(device);
@@ -353,19 +353,19 @@ export default function Devices() {
                         setWebhookTestResult(null);
                       }}
                       className={clsx(
-                        "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors border cursor-pointer",
+                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors border cursor-pointer",
                         device.webhookUrl 
                           ? "bg-emerald-50 text-emerald-700 border-emerald-200/80 hover:bg-emerald-100" 
                           : "bg-slate-50 text-slate-500 border-slate-200/60 hover:bg-slate-100"
                       )}
                     >
-                      <Globe className="w-3.5 h-3.5" />
+                      <Globe className="w-3 h-3" />
                       <span>{device.webhookUrl ? 'Webhook Aktif' : 'Atur Webhook'}</span>
                     </button>
 
                     {device.autoReply && (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                        <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                        <Sparkles className="w-3 h-3 text-emerald-600" />
                         <span>AI 9routes Active</span>
                       </span>
                     )}
@@ -373,8 +373,8 @@ export default function Devices() {
                 </div>
 
                 {/* Action Footer */}
-                <div className="bg-slate-50/80 px-6 py-3.5 border-t border-slate-100 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
+                <div className="bg-slate-50/80 px-3.5 py-2 border-t border-slate-100 flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5">
                     {isConnected ? (
                       <button 
                         onClick={() => {
@@ -382,21 +382,21 @@ export default function Devices() {
                           setTestPhone('');
                           setTestSentStatus(null);
                         }}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-[11px] font-semibold transition-colors cursor-pointer"
                       >
-                        <SendIcon className="w-3.5 h-3.5" />
+                        <SendIcon className="w-3 h-3" />
                         <span>Kirim Tes</span>
                       </button>
                     ) : (
                       <button 
                         onClick={() => handleConnect(device)}
                         disabled={isConnecting}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-[11px] font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
                       >
                         {isConnecting ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <Loader2 className="w-3 h-3 animate-spin" />
                         ) : (
-                          <QrCode className="w-3.5 h-3.5" />
+                          <QrCode className="w-3 h-3" />
                         )}
                         <span>{isQR ? 'Buka QR / Pairing' : isConnecting ? 'Menghubungkan...' : 'Hubungkan'}</span>
                       </button>
@@ -405,20 +405,20 @@ export default function Devices() {
                     {isConnected && (
                       <button 
                         onClick={() => handleConnect(device)}
-                        className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-slate-200 cursor-pointer"
+                        className="p-1 text-slate-400 hover:text-slate-700 hover:bg-white rounded-md transition-colors border border-transparent hover:border-slate-200 cursor-pointer"
                         title="Reconnect Session"
                       >
-                        <RefreshCw className="w-4 h-4" />
+                        <RefreshCw className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>
 
                   <button 
                     onClick={() => handleDeleteDevice(device)}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                    className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
                     title="Hapus Perangkat"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
