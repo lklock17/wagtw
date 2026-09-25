@@ -5,6 +5,19 @@ import axios from 'axios';
 const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4011';
 
 export const getDevices = async (req: Request, res: Response) => {
+  try {
+    // If an Android Agent device hasn't pinged in the last 20 seconds, mark as DISCONNECTED
+    const cutoff = new Date(Date.now() - 20000);
+    await prisma.device.updateMany({
+      where: {
+        status: 'CONNECTED',
+        sessionData: { contains: 'ANDROID_AGENT' },
+        lastConnected: { lt: cutoff }
+      },
+      data: { status: 'DISCONNECTED' }
+    });
+  } catch (e) {}
+
   const devices = await prisma.device.findMany({
     orderBy: { createdAt: 'desc' }
   });

@@ -220,6 +220,15 @@ export const getPendingMessages = async (req: Request, res: Response) => {
   const { deviceId } = req.params;
   const ids = deviceId.split(',').map(s => s.trim()).filter(Boolean);
 
+  if (ids.length > 0) {
+    try {
+      await prisma.device.updateMany({
+        where: { id: { in: ids } },
+        data: { status: 'CONNECTED', lastConnected: new Date() }
+      });
+    } catch (e) {}
+  }
+
   const allMessages: any[] = [];
   for (const id of ids) {
     const queue = pendingAgentMessages.get(id) || [];
@@ -237,4 +246,24 @@ export const updateMessageStatus = async (req: Request, res: Response) => {
   const { messageId, status, error } = req.body;
   console.log(`[Android Agent] Message ${messageId} status: ${status} ${error ? `(${error})` : ''}`);
   res.json({ success: true });
+};
+
+// 5. Disconnect Android Agent device(s)
+export const disconnectAgent = async (req: Request, res: Response) => {
+  const { deviceId, deviceIds } = req.body;
+  const targetIds: string[] = deviceIds || (deviceId ? [deviceId] : []);
+
+  if (targetIds.length > 0) {
+    try {
+      await prisma.device.updateMany({
+        where: { id: { in: targetIds } },
+        data: { status: 'DISCONNECTED' }
+      });
+      console.log(`[Android Agent] Device(s) disconnected: ${targetIds.join(', ')}`);
+    } catch (e: any) {
+      console.error('Failed to update disconnect status:', e.message);
+    }
+  }
+
+  res.json({ success: true, message: 'Agent disconnected successfully' });
 };

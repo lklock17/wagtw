@@ -18,6 +18,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -91,6 +92,45 @@ class AgentForegroundService : Service() {
 
         startAgentLoop()
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        isLoopRunning = false
+        sendDisconnect()
+        appendLog("🛑 Layanan agen dimatikan")
+        onStatusChanged?.invoke(false)
+    }
+
+    private fun sendDisconnect() {
+        Thread {
+            try {
+                val serverUrl = prefs.serverUrl.trimEnd('/')
+                val ids = listOfNotNull(
+                    prefs.businessDeviceId.ifEmpty { null },
+                    prefs.personalDeviceId.ifEmpty { null },
+                    prefs.deviceId.ifEmpty { null }
+                ).distinct()
+
+                if (ids.isNotEmpty()) {
+                    val json = JSONObject().apply {
+                        val arr = JSONArray()
+                        ids.forEach { arr.put(it) }
+                        put("deviceIds", arr)
+                    }
+
+                    val body = json.toString().toRequestBody("application/json".toMediaType())
+                    val req = Request.Builder()
+                        .url("$serverUrl/api/agent/disconnect")
+                        .post(body)
+                        .build()
+
+                    httpClient.newCall(req).execute().close()
+                }
+            } catch (e: Exception) {
+                Log.e("WAGTW_AGENT", "Disconnect error: ${e.message}")
+            }
+        }.start()
     }
 
     private fun startAgentLoop() {
