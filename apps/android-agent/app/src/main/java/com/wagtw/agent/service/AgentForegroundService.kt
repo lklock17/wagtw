@@ -40,7 +40,7 @@ class AgentForegroundService : Service() {
 
         var onLogReceived: ((String) -> Unit)? = null
         var onStatusChanged: ((Boolean) -> Unit)? = null
-        private var instance: AgentForegroundService? = null
+        var instance: AgentForegroundService? = null
 
         fun appendLog(text: String) {
             Handler(Looper.getMainLooper()).post {
@@ -50,6 +50,10 @@ class AgentForegroundService : Service() {
 
         fun notifyMessageSent(messageId: String) {
             instance?.reportMessageStatus(messageId, "SENT")
+        }
+
+        fun notifyMessageFailed(messageId: String, error: String) {
+            instance?.reportMessageStatus(messageId, "FAILED", error)
         }
 
         fun sendDirectTest(context: Context, to: String, text: String, forcedPkg: String? = null) {

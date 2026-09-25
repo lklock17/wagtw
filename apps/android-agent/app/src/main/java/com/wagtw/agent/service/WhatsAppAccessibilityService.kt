@@ -32,9 +32,8 @@ class WhatsAppAccessibilityService : AccessibilityService() {
 
                     AgentForegroundService.appendLog("⚠️ Gagal: Timeout tombol kirim WhatsApp (14 detik)")
                     if (currentMsgId != null) {
-                        AgentForegroundService.instance?.reportMessageStatus(
+                        AgentForegroundService.notifyMessageFailed(
                             currentMsgId,
-                            "FAILED",
                             "Timeout: WhatsApp tidak merespons atau tombol kirim tidak muncul (14 detik)"
                         )
                     }
@@ -71,12 +70,13 @@ class WhatsAppAccessibilityService : AccessibilityService() {
 
         // 1. DETECT WHATSAPP ERROR DIALOGS (Nomor tidak terdaftar, Akun dibatasi, dll)
         val errorKeywords = listOf(
+            "tidak bisa memulai chat baru",
+            "Akun Anda dibatasi",
             "tidak terdaftar di WhatsApp",
             "isn't on WhatsApp",
             "not on WhatsApp",
             "tidak valid",
             "invalid phone",
-            "Akun Anda dibatasi",
             "tidak diizinkan menggunakan WhatsApp",
             "This account is not allowed"
         )
@@ -86,10 +86,12 @@ class WhatsAppAccessibilityService : AccessibilityService() {
             val found = rootNode.findAccessibilityNodeInfosByText(err)
             if (found.isNotEmpty()) {
                 detectedError = when {
+                    err.contains("chat baru", true) || err.contains("dibatasi", true) ->
+                        "Akun Anda dibatasi oleh WhatsApp (tidak bisa memulai chat baru)"
                     err.contains("terdaftar", true) || err.contains("on WhatsApp", true) ->
                         "Nomor tujuan tidak terdaftar di WhatsApp"
-                    err.contains("dibatasi", true) || err.contains("tidak diizinkan", true) || err.contains("not allowed", true) ->
-                        "Akun WhatsApp dibatasi / suspended"
+                    err.contains("tidak diizinkan", true) || err.contains("not allowed", true) ->
+                        "Akun WhatsApp ditangguhkan / banned"
                     else -> "Nomor telepon tidak valid di WhatsApp"
                 }
                 break
@@ -105,7 +107,7 @@ class WhatsAppAccessibilityService : AccessibilityService() {
 
             AgentForegroundService.appendLog("❌ Gagal: $detectedError")
             if (msgId != null) {
-                AgentForegroundService.instance?.reportMessageStatus(msgId, "FAILED", detectedError)
+                AgentForegroundService.notifyMessageFailed(msgId, detectedError)
             }
 
             // Dismiss dialog: look for "OK" or "BATAL" button
