@@ -124,6 +124,7 @@ export const sendMessage = async (req: Request, res: Response) => {
 
         await prisma.messageLog.create({
           data: {
+            id: msgId,
             deviceId: device.id,
             clientId: (req as any).client?.id || null,
             to: recipient,
@@ -137,6 +138,7 @@ export const sendMessage = async (req: Request, res: Response) => {
           success: true,
           message: 'Pesan berhasil diantrekan ke HP Android Agent!',
           data: {
+            messageId: msgId,
             recipient,
             sentVia: {
               deviceId: device.id,

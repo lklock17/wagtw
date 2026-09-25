@@ -58,8 +58,7 @@ class AgentForegroundService : Service() {
             val appLabel = if (targetPkg == "com.whatsapp.w4b") "WhatsApp Business" else "WhatsApp Personal"
 
             try {
-                WhatsAppAccessibilityService.lastSentMessageId = "test_${System.currentTimeMillis()}"
-                WhatsAppAccessibilityService.isWaitingForSend = true
+                WhatsAppAccessibilityService.startSendWatchdog("test_${System.currentTimeMillis()}")
 
                 var cleaned = to.replace(Regex("[^0-9]"), "")
                 if (cleaned.startsWith("0")) cleaned = "62" + cleaned.substring(1)
@@ -249,8 +248,7 @@ class AgentForegroundService : Service() {
 
     private fun dispatchWhatsAppMessage(messageId: String, to: String, text: String, targetPkg: String) {
         try {
-            WhatsAppAccessibilityService.lastSentMessageId = messageId
-            WhatsAppAccessibilityService.isWaitingForSend = true
+            WhatsAppAccessibilityService.startSendWatchdog(messageId)
 
             // Clean number to digits
             var cleaned = to.replace(Regex("[^0-9]"), "")
@@ -322,6 +320,7 @@ class AgentForegroundService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isLoopRunning = false
+        WhatsAppAccessibilityService.cancelWatchdog()
         onStatusChanged?.invoke(false)
         appendLog("🛑 Layanan dimatikan")
         instance = null

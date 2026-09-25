@@ -245,6 +245,21 @@ export const getPendingMessages = async (req: Request, res: Response) => {
 export const updateMessageStatus = async (req: Request, res: Response) => {
   const { messageId, status, error } = req.body;
   console.log(`[Android Agent] Message ${messageId} status: ${status} ${error ? `(${error})` : ''}`);
+
+  if (messageId) {
+    try {
+      await prisma.messageLog.updateMany({
+        where: { id: messageId },
+        data: {
+          status: status === 'SENT' ? 'SENT' : 'FAILED',
+          error: error || null
+        }
+      });
+    } catch (e: any) {
+      console.error('Failed to update message status in DB:', e.message);
+    }
+  }
+
   res.json({ success: true });
 };
 
