@@ -8,7 +8,7 @@ import {
   welcomeDevice,
   getPersonas
 } from '../controllers/warmup.controller';
-import { joinGroupBatch, getGroupTasksList } from '../controllers/agent.controller';
+import { joinGroupBatch, getGroupTasksList, clearGroupTasks } from '../controllers/agent.controller';
 
 const router = Router();
 
@@ -23,5 +23,6 @@ router.post('/welcome-device', welcomeDevice);
 // Group Warmup & Auto-Join routes
 router.post('/groups/join', joinGroupBatch);
 router.get('/groups/tasks', getGroupTasksList);
+router.delete('/groups/tasks', clearGroupTasks);
 
 export default router;

@@ -108,6 +108,36 @@ app.post('/messages/send', async (req, res) => {
   }
 });
 
+// Endpoint to join a WhatsApp group via invite link or code
+app.post('/groups/join', async (req: Request, res: Response) => {
+  const { deviceId, inviteUrl } = req.body;
+
+  if (!deviceId || !inviteUrl) {
+    return res.status(400).json({ error: 'deviceId and inviteUrl are required' });
+  }
+
+  const client = await waManager.getClient(deviceId);
+  if (!client) {
+    return res.status(404).json({ error: 'Device session not active or not connected' });
+  }
+
+  try {
+    let inviteCode = inviteUrl.trim();
+    if (inviteCode.includes('chat.whatsapp.com/')) {
+      inviteCode = inviteCode.split('chat.whatsapp.com/')[1].replace('invite/', '').split('?')[0].split('/')[0];
+    }
+
+    console.log(`[Worker] Device ${deviceId} attempting to join group with code: ${inviteCode}`);
+    const result = await (client as any).joinGroup(inviteCode);
+    console.log(`[Worker] Device ${deviceId} successfully joined group:`, result);
+
+    res.json({ success: true, result });
+  } catch (error: any) {
+    console.error(`[Worker] Device ${deviceId} failed to join group:`, error.message);
+    res.status(500).json({ success: false, error: error.message || 'Gagal bergabung ke grup' });
+  }
+});
+
 // Endpoint to check if phone number is registered & active on WhatsApp
 app.post('/devices/:deviceId/check-number', async (req: Request, res: Response) => {
   const { deviceId } = req.params;

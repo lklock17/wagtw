@@ -105,6 +105,7 @@ export const warmupService = {
   triggerManual: () => api.post('/warmup/trigger'),
   joinGroups: (data: { deviceIds: string[]; groupLinks: string[] }) => api.post('/warmup/groups/join', data),
   getGroupTasks: () => api.get('/warmup/groups/tasks'),
+  clearGroupTasks: () => api.delete('/warmup/groups/tasks'),
 };
 
 export const authService = {

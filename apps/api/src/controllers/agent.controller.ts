@@ -1,5 +1,8 @@
 import { Request, Response } from 'express';
 import { prisma } from '@wagtw/database';
+import axios from 'axios';
+
+const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4011';
 
 // In-memory queue for pending outbound messages / tasks to be dispatched to Android Agent
 export interface AgentQueueItem {
@@ -48,6 +51,45 @@ export const enqueueAgentGroupJoin = (deviceId: string, id: string, inviteUrl: s
   const list = pendingAgentMessages.get(deviceId) || [];
   list.push({ id, type: 'JOIN_GROUP', inviteUrl });
   pendingAgentMessages.set(deviceId, list);
+};
+
+export const executeWorkerGroupJoin = (deviceId: string, id: string, inviteUrl: string, deviceName?: string, delayMs = 0) => {
+  const task: GroupJoinTask = {
+    id,
+    deviceId,
+    deviceName,
+    inviteUrl,
+    status: 'PENDING',
+    createdAt: new Date(),
+    updatedAt: new Date()
+  };
+  groupJoinTasks.unshift(task);
+  if (groupJoinTasks.length > 200) groupJoinTasks.pop();
+
+  setTimeout(async () => {
+    try {
+      console.log(`[Worker Group Join] Triggering join for device ${deviceName || deviceId} on ${inviteUrl}...`);
+      const response = await axios.post(`${WORKER_URL}/groups/join`, {
+        deviceId,
+        inviteUrl
+      }, { timeout: 30000 });
+
+      if (response.data?.success) {
+        task.status = 'SUCCESS';
+        task.updatedAt = new Date();
+        console.log(`[Worker Group Join] Task ${id} SUCCEEDED for device ${deviceName || deviceId}`);
+      } else {
+        task.status = 'FAILED';
+        task.error = response.data?.error || 'Gagal bergabung ke grup';
+        task.updatedAt = new Date();
+      }
+    } catch (err: any) {
+      task.status = 'FAILED';
+      task.error = err.response?.data?.error || err.message || 'Gagal terhubung ke worker WhatsApp';
+      task.updatedAt = new Date();
+      console.error(`[Worker Group Join] Task ${id} FAILED:`, task.error);
+    }
+  }, delayMs);
 };
 
 // 1. Register Android Agent device(s) - Supports Dual Numbers (Business & Personal)
@@ -360,10 +402,25 @@ export const joinGroupBatch = async (req: Request, res: Response) => {
   });
 
   let enqueuedCount = 0;
+  let staggerMs = 0;
+
   for (const dev of devices) {
+    let isAndroidAgent = false;
+    try {
+      if (dev.sessionData && JSON.parse(dev.sessionData).type === 'ANDROID_AGENT') {
+        isAndroidAgent = true;
+      }
+    } catch (e) {}
+
     for (const url of cleanUrls) {
       const taskId = `group_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      enqueueAgentGroupJoin(dev.id, taskId, url, dev.name);
+      if (isAndroidAgent) {
+        enqueueAgentGroupJoin(dev.id, taskId, url, dev.name);
+      } else {
+        // Direct execution via worker for Web Scan QR sessions with human staggered delay (5s per join)
+        executeWorkerGroupJoin(dev.id, taskId, url, dev.name, staggerMs);
+        staggerMs += 5000;
+      }
       enqueuedCount++;
     }
   }
@@ -378,4 +435,10 @@ export const joinGroupBatch = async (req: Request, res: Response) => {
 // 7. Get Group Tasks
 export const getGroupTasksList = async (req: Request, res: Response) => {
   res.json({ success: true, tasks: groupJoinTasks });
+};
+
+// 8. Clear Group Tasks History
+export const clearGroupTasks = async (req: Request, res: Response) => {
+  groupJoinTasks.length = 0;
+  res.json({ success: true, message: 'Riwayat antrean grup berhasil dibersihkan.' });
 };

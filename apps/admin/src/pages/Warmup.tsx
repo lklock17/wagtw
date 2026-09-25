@@ -175,6 +175,16 @@ export default function Warmup() {
     }
   };
 
+  const handleClearGroupTasks = async () => {
+    try {
+      await warmupService.clearGroupTasks();
+      setGroupTasks([]);
+      setAlert({ type: 'success', message: 'Riwayat antrean grup berhasil dibersihkan.' });
+    } catch (e: any) {
+      setAlert({ type: 'error', message: 'Gagal membersihkan antrean: ' + e.message });
+    }
+  };
+
   const fetchModelsList = async (url?: string, key?: string, isManual = false) => {
     try {
       setFetchingModels(true);
@@ -549,18 +559,29 @@ export default function Warmup() {
                   </div>
                   <div>
                     <h3 className="font-bold text-slate-900 text-sm">Laporan & Antrean Auto-Join</h3>
-                    <p className="text-xs text-slate-500">Status pengerjaan otomatis di HP</p>
+                    <p className="text-xs text-slate-500">Status pengerjaan (HP Agent & Web Session)</p>
                   </div>
                 </div>
 
-                <button
-                  onClick={loadGroupTasks}
-                  disabled={fetchingTasks}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-600 cursor-pointer"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${fetchingTasks ? 'animate-spin text-emerald-600' : ''}`} />
-                  <span>Segarkan</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  {groupTasks.length > 0 && (
+                    <button
+                      onClick={handleClearGroupTasks}
+                      className="px-2.5 py-1.5 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-semibold cursor-pointer transition-colors"
+                      title="Bersihkan riwayat antrean"
+                    >
+                      Bersihkan
+                    </button>
+                  )}
+                  <button
+                    onClick={loadGroupTasks}
+                    disabled={fetchingTasks}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-600 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${fetchingTasks ? 'animate-spin text-emerald-600' : ''}`} />
+                    <span>Segarkan</span>
+                  </button>
+                </div>
               </div>
 
               {/* Tasks List */}
