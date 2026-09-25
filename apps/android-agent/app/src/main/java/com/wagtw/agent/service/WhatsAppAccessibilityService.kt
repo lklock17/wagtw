@@ -39,7 +39,7 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                     }
 
                     // Return to previous screen
-                    instance?.performGlobalAction(GLOBAL_ACTION_BACK)
+                    instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                 }
             }
             watchdogHandler.postDelayed(watchdogRunnable!!, 14000)
@@ -68,11 +68,13 @@ class WhatsAppAccessibilityService : AccessibilityService() {
 
         val rootNode = rootInActiveWindow ?: return
 
-        // 1. DETECT WHATSAPP ERROR DIALOGS (Nomor tidak terdaftar, Akun dibatasi, dll)
+        // 1. DETECT WHATSAPP ERROR DIALOGS & BOTTOM SHEETS
         val errorKeywords = listOf(
+            "Kirim undangan melalui SMS",
+            "tidak terdaftar di WhatsApp",
+            "tidak bisa memulai obrolan baru",
             "tidak bisa memulai chat baru",
             "Akun Anda dibatasi",
-            "tidak terdaftar di WhatsApp",
             "isn't on WhatsApp",
             "not on WhatsApp",
             "tidak valid",
@@ -86,10 +88,10 @@ class WhatsAppAccessibilityService : AccessibilityService() {
             val found = rootNode.findAccessibilityNodeInfosByText(err)
             if (found.isNotEmpty()) {
                 detectedError = when {
-                    err.contains("chat baru", true) || err.contains("dibatasi", true) ->
-                        "Akun Anda dibatasi oleh WhatsApp (tidak bisa memulai chat baru)"
-                    err.contains("terdaftar", true) || err.contains("on WhatsApp", true) ->
+                    err.contains("terdaftar", true) || err.contains("undangan", true) || err.contains("on WhatsApp", true) ->
                         "Nomor tujuan tidak terdaftar di WhatsApp"
+                    err.contains("chat baru", true) || err.contains("obrolan baru", true) || err.contains("dibatasi", true) ->
+                        "Akun Anda dibatasi oleh WhatsApp (tidak bisa memulai chat/obrolan baru)"
                     err.contains("tidak diizinkan", true) || err.contains("not allowed", true) ->
                         "Akun WhatsApp ditangguhkan / banned"
                     else -> "Nomor telepon tidak valid di WhatsApp"
@@ -110,13 +112,23 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                 AgentForegroundService.notifyMessageFailed(msgId, detectedError)
             }
 
-            // Dismiss dialog: look for "OK" or "BATAL" button
-            val okButtons = rootNode.findAccessibilityNodeInfosByText("OK")
-            for (btn in okButtons) {
-                if (btn.isClickable) {
-                    btn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    break
+            // Dismiss dialog / bottom sheet: look for "Nanti", "Not now", "OK", "BATAL", "Batal"
+            val dismissLabels = listOf("Nanti", "Not now", "OK", "Batal", "BATAL", "Cancel")
+            for (label in dismissLabels) {
+                val dismissButtons = rootNode.findAccessibilityNodeInfosByText(label)
+                var handled = false
+                for (btn in dismissButtons) {
+                    if (btn.isClickable) {
+                        btn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        handled = true
+                        break
+                    } else if (btn.parent?.isClickable == true) {
+                        btn.parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        handled = true
+                        break
+                    }
                 }
+                if (handled) break
             }
 
             // Return to previous screen
