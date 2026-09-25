@@ -17,6 +17,8 @@ if (!fs.existsSync(TOKENS_BASE_DIR)) {
 class WhatsAppManager {
   private sessions: Map<string, wppconnect.Whatsapp> = new Map();
   private cooldowns: Map<string, number> = new Map(); // key: deviceId:remoteNumber -> timestamp
+  private groupCooldowns: Map<string, number> = new Map(); // key: groupId -> timestamp
+  private groupResponding: Set<string> = new Set(); // key: groupId
   private reconnectingDevices: Set<string> = new Set();
   private reconnectTimers: Map<string, NodeJS.Timeout> = new Map();
   private inProgressSessions: Set<string> = new Set();
@@ -721,7 +723,23 @@ class WhatsAppManager {
 
     // 2. Listen to incoming messages
     client.onMessage(async (message) => {
-      if (message.isGroupMsg) return; // Optional: handle group
+      // Determine if message belongs to a WhatsApp Group
+      const fromStr = typeof message.from === 'string' ? message.from : '';
+      const chatIdStr = typeof message.chatId === 'string' 
+        ? message.chatId 
+        : (message.chatId?._serialized || '');
+
+      const isGroup = Boolean(
+        message.isGroupMsg === true ||
+        fromStr.endsWith('@g.us') ||
+        chatIdStr.endsWith('@g.us') ||
+        Boolean(message.author && (fromStr.endsWith('@g.us') || chatIdStr.endsWith('@g.us')))
+      );
+
+      if (isGroup) {
+        this.handleGroupMessage(client, deviceId, message);
+        return;
+      }
 
       // 1. Ignore status broadcasts & empty messages
       if (
@@ -865,6 +883,148 @@ class WhatsAppManager {
         }
       }
     });
+  }
+
+  private async handleGroupMessage(client: any, deviceId: string, message: any) {
+    let targetGroupId: string | null = null;
+    try {
+      // 1. Determine Group ID
+      const fromStr = typeof message.from === 'string' ? message.from : '';
+      const chatIdStr = typeof message.chatId === 'string' 
+        ? message.chatId 
+        : (message.chatId?._serialized || '');
+
+      targetGroupId = fromStr.endsWith('@g.us') ? fromStr : (chatIdStr.endsWith('@g.us') ? chatIdStr : null);
+      if (!targetGroupId) {
+        return;
+      }
+
+      // 2. Extract Message Text
+      const rawText = message.body || message.content || message.caption || (message as any).text || '';
+      const text = typeof rawText === 'string' ? rawText.trim() : '';
+
+      // Skip status or empty messages
+      if (
+        message.fromMe ||
+        !text ||
+        text.length === 0 ||
+        targetGroupId.includes('broadcast') ||
+        (message as any).isStatus
+      ) {
+        return;
+      }
+
+      // 3. Check device status
+      const device = await prisma.device.findUnique({ where: { id: deviceId } });
+      if (!device || device.status !== 'CONNECTED') {
+        return;
+      }
+
+      // 4. Identify sender & avoid bot self-replies or bot-on-bot looping
+      const senderJid = message.author || (message as any).sender?.id || message.from;
+      const senderPhone = (typeof senderJid === 'string' ? senderJid : senderJid?._serialized || '').replace(/[^0-9]/g, '');
+      const myPhone = (device.phoneNumber || '').replace(/[^0-9]/g, '');
+
+      // Skip if sender is myself
+      if (myPhone && senderPhone && myPhone === senderPhone) {
+        return;
+      }
+
+      // Check if sender is ANY of OUR connected devices (prevent bots talking to each other)
+      const allDevices = await prisma.device.findMany({ select: { phoneNumber: true } });
+      const ourPhones = new Set(allDevices.map((d: any) => (d.phoneNumber || '').replace(/[^0-9]/g, '')).filter(Boolean));
+      if (senderPhone && ourPhones.has(senderPhone)) {
+        return;
+      }
+
+      // 5. Cooldown & Lock check (Only 1 bot replies at a time with 8s cooldown per group)
+      const now = Date.now();
+      const lastReply = this.groupCooldowns.get(targetGroupId) || 0;
+      if (now - lastReply < 8000) {
+        return;
+      }
+
+      if (this.groupResponding.has(targetGroupId)) {
+        return;
+      }
+
+      // Claim response lock immediately
+      this.groupResponding.add(targetGroupId);
+      this.groupCooldowns.set(targetGroupId, now);
+
+      const senderMeta = (message as any).sender || {};
+      const senderName = 
+        senderMeta.name || 
+        senderMeta.pushname || 
+        (message as any).notifyName || 
+        (senderPhone ? `+${senderPhone}` : 'Teman');
+
+      console.log(`[Group AI Chat] 🚀 ${device.name} triggered to reply in ${targetGroupId} to ${senderName}: "${text}"`);
+
+      try {
+        // 6. Generate natural conversational response via 9routes AI
+        const groupSystemPrompt = 
+          "Kamu adalah anggota grup WhatsApp di Indonesia yang ramah, asik, santai, dan gaul. " +
+          "Tugasmu: Tanggapi obrolan di grup secara natural dan NYAMBUNG dengan apa yang sedang dibicarakan. " +
+          "Gunakan bahasa percakapan sehari-hari yang akrab (contoh: 'wkwk bener juga tuh bro', 'wah mantap infonya', 'siap gas bro', 'iya santai aja', 'boleh tuh infonya', dll). " +
+          "Aturan wajib:\n" +
+          "1. Jawab singkat (cukup 1 sampai 2 kalimat saja, maksimal 20 kata).\n" +
+          "2. Jangan kaku, jangan gunakan bahasa formal, jangan gunakan format bot/markdown tebal berlebihan.\n" +
+          "3. Dilarang mengaku sebagai AI/bot. Posisikan dirimu sebagai sesama teman/anggota grup biasa.";
+
+        const userChatPrompt = `Pengirim di grup: ${senderName}\nObrolan: "${text}"\nBalasan santai kamu:`;
+
+        const aiReply = await aiService.generateResponse(userChatPrompt, groupSystemPrompt);
+        if (!aiReply || aiReply.trim().length === 0) {
+          console.log(`[Group AI Chat] 9routes AI returned empty response for ${targetGroupId}`);
+          return;
+        }
+
+        const cleanReply = aiReply.replace(/^["']|["']$/g, '').trim();
+
+        // 7. Humanized jitter typing delay (2.0s - 4.5s)
+        const typingDuration = Math.floor(Math.random() * 2500) + 2000;
+        try {
+          if (typeof (client as any).startTyping === 'function') {
+            await (client as any).startTyping(targetGroupId, typingDuration);
+          }
+        } catch {}
+
+        await new Promise((r) => setTimeout(r, typingDuration));
+
+        try {
+          if (typeof (client as any).stopTyping === 'function') {
+            await (client as any).stopTyping(targetGroupId).catch(() => {});
+          }
+        } catch {}
+
+        // 8. Send reply text into the group
+        await client.sendText(targetGroupId, cleanReply);
+        console.log(`[Group AI Chat] ✅ ${device.name} replied in ${targetGroupId}: "${cleanReply}"`);
+
+        // Record log
+        try {
+          await prisma.messageLog.create({
+            data: {
+              deviceId,
+              to: targetGroupId,
+              body: cleanReply,
+              type: 'TEXT',
+              status: 'SENT'
+            }
+          });
+        } catch {}
+
+      } finally {
+        this.groupResponding.delete(targetGroupId);
+      }
+
+    } catch (err: any) {
+      if (targetGroupId) {
+        this.groupResponding.delete(targetGroupId);
+      }
+      console.error(`[Group AI Chat Error] Device ${deviceId}:`, err.message);
+    }
   }
 
   async getClient(deviceId: string) {
