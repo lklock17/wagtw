@@ -217,22 +217,28 @@ class AgentForegroundService : Service() {
                                 for (i in 0 until messages.length()) {
                                     val msg = messages.getJSONObject(i)
                                     val msgId = msg.getString("id")
-                                    val to = msg.getString("to")
-                                    val text = msg.getString("text")
+                                    val type = msg.optString("type", "MESSAGE")
                                     val msgDeviceId = msg.optString("deviceId", "")
-
                                     val targetPkg = if (msgDeviceId == prefs.personalDeviceId) {
                                         "com.whatsapp"
                                     } else {
                                         "com.whatsapp.w4b"
                                     }
-
                                     val label = if (targetPkg == "com.whatsapp.w4b") "Business" else "Personal"
-                                    appendLog("📤 Mengirim ke $to ($label): $text")
-                                    dispatchWhatsAppMessage(msgId, to, text, targetPkg)
 
-                                    // Wait between messages (human delay 6-10s)
-                                    Thread.sleep(7000)
+                                    if (type == "JOIN_GROUP") {
+                                        val inviteUrl = msg.getString("inviteUrl")
+                                        appendLog("👥 Membuka tautan grup ($label): $inviteUrl")
+                                        dispatchJoinGroup(msgId, inviteUrl, targetPkg)
+                                        Thread.sleep(12000)
+                                    } else {
+                                        val to = msg.getString("to")
+                                        val text = msg.getString("text")
+                                        appendLog("📤 Mengirim ke $to ($label): $text")
+                                        dispatchWhatsAppMessage(msgId, to, text, targetPkg)
+                                        // Wait between messages (human delay 6-10s)
+                                        Thread.sleep(7000)
+                                    }
                                 }
                             }
                         }
@@ -273,6 +279,25 @@ class AgentForegroundService : Service() {
         } catch (e: Exception) {
             appendLog("❌ Gagal membuka WhatsApp: ${e.message}")
             reportMessageStatus(messageId, "FAILED", e.message)
+        }
+    }
+
+    private fun dispatchJoinGroup(taskId: String, inviteUrl: String, targetPkg: String) {
+        try {
+            WhatsAppAccessibilityService.startSendWatchdog(taskId)
+            val appLabel = if (targetPkg == "com.whatsapp.w4b") "WhatsApp Business" else "WhatsApp Personal"
+            appendLog("📲 Membuka tautan undangan grup via $appLabel...")
+
+            val uri = Uri.parse(inviteUrl)
+            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                setPackage(targetPkg)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+
+            applicationContext.startActivity(intent)
+        } catch (e: Exception) {
+            appendLog("❌ Gagal membuka tautan grup: ${e.message}")
+            reportMessageStatus(taskId, "FAILED", e.message)
         }
     }
 

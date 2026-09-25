@@ -123,7 +123,7 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                         handled = true
                         break
                     } else if (btn.parent?.isClickable == true) {
-                        btn.parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        btn.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                         handled = true
                         break
                     }
@@ -136,6 +136,87 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                 performGlobalAction(GLOBAL_ACTION_BACK)
             }, 800)
             return
+        }
+
+        // 2. DETECT GROUP JOIN ERRORS (Grup Penuh, Tautan Kadaluwarsa)
+        val groupErrorKeywords = listOf("Grup ini penuh", "This group is full", "Tautan ini telah disetel ulang", "This invite link has been reset", "Tidak dapat bergabung", "Couldn't join")
+        for (gErr in groupErrorKeywords) {
+            val found = rootNode.findAccessibilityNodeInfosByText(gErr)
+            if (found.isNotEmpty()) {
+                Log.w("WAGTW_ACCESSIBILITY", "Group join error: $gErr")
+                cancelWatchdog()
+                isWaitingForSend = false
+                val taskId = lastSentMessageId
+                lastSentMessageId = null
+
+                AgentForegroundService.appendLog("⚠️ Gagal gabung grup: $gErr")
+                if (taskId != null) {
+                    AgentForegroundService.notifyMessageFailed(taskId, "Gagal gabung grup: $gErr")
+                }
+
+                // Dismiss
+                val okButtons = rootNode.findAccessibilityNodeInfosByText("OK")
+                for (btn in okButtons) {
+                    if (btn.isClickable) {
+                        btn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    } else {
+                        btn.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    }
+                }
+
+                Handler(Looper.getMainLooper()).postDelayed({
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                }, 800)
+                return
+            }
+        }
+
+        // 3. SEARCH AND CLICK "GABUNG KE GRUP" (AUTO JOIN GROUP WARMUP)
+        val joinKeywords = listOf("Gabung ke grup", "Join group", "Gabung grup", "GABUNG KE GRUP", "JOIN GROUP")
+        val joinNodes = mutableListOf<AccessibilityNodeInfo>()
+        for (kw in joinKeywords) {
+            joinNodes.addAll(rootNode.findAccessibilityNodeInfosByText(kw))
+        }
+        joinNodes.addAll(rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/ok"))
+        joinNodes.addAll(rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/ok"))
+        joinNodes.addAll(rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/join_group"))
+        joinNodes.addAll(rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/join_group"))
+
+        for (node in joinNodes) {
+            val nodeText = node.text?.toString() ?: ""
+            val nodeDesc = node.contentDescription?.toString() ?: ""
+            val nodeRes = node.viewIdResourceName ?: ""
+            val isJoin = nodeText.contains("gabung", true) || nodeText.contains("join", true) ||
+                         nodeDesc.contains("gabung", true) || nodeDesc.contains("join", true) ||
+                         nodeRes.contains("join", true)
+
+            if (isJoin && (node.isClickable || node.parent?.isClickable == true)) {
+                val clicked = if (node.isClickable) {
+                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                } else {
+                    node.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+                }
+
+                if (clicked) {
+                    Log.d("WAGTW_ACCESSIBILITY", "Successfully clicked Join Group button!")
+                    cancelWatchdog()
+                    isWaitingForSend = false
+
+                    val taskId = lastSentMessageId
+                    lastSentMessageId = null
+
+                    AgentForegroundService.appendLog("🎉 Berhasil bergabung ke grup WhatsApp!")
+                    if (taskId != null) {
+                        AgentForegroundService.notifyMessageSent(taskId)
+                    }
+
+                    // Return to previous screen after brief pause
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                    }, 1500)
+                    return
+                }
+            }
         }
 
         // 2. SEARCH AND CLICK SEND BUTTON

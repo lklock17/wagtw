@@ -17,12 +17,25 @@ import {
   Timer,
   Layers,
   HelpCircle,
-  Shuffle
+  Shuffle,
+  Users,
+  Link2,
+  ShieldCheck,
+  Check,
+  ExternalLink,
+  ArrowRight
 } from 'lucide-react';
 import { warmupService, deviceService } from '../services/api';
 import { PERSONA_TEMPLATES, PersonaTemplate } from '../constants/personas';
 
 export default function Warmup() {
+  const [activeTab, setActiveTab] = useState<'groups' | 'p2p'>('groups');
+  const [groupLinksText, setGroupLinksText] = useState('');
+  const [selectedGroupDeviceIds, setSelectedGroupDeviceIds] = useState<string[]>([]);
+  const [groupTasks, setGroupTasks] = useState<any[]>([]);
+  const [joiningGroups, setJoiningGroups] = useState(false);
+  const [fetchingTasks, setFetchingTasks] = useState(false);
+
   const [config, setConfig] = useState({
     isEnabled: false,
     dailyTarget: 10,
@@ -51,7 +64,25 @@ export default function Warmup() {
 
   useEffect(() => {
     loadData();
+    loadGroupTasks();
+    const interval = setInterval(() => {
+      loadGroupTasks();
+    }, 4000);
+    return () => clearInterval(interval);
   }, []);
+
+  const loadGroupTasks = async () => {
+    try {
+      setFetchingTasks(true);
+      const res = await warmupService.getGroupTasks();
+      if (res.data?.tasks) {
+        setGroupTasks(res.data.tasks);
+      }
+    } catch (e) {
+    } finally {
+      setFetchingTasks(false);
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -74,6 +105,10 @@ export default function Warmup() {
         }));
       }
       setDevices(devRes.data || []);
+      if (devRes.data) {
+        const connected = devRes.data.filter((d: any) => d.status === 'CONNECTED');
+        setSelectedGroupDeviceIds(connected.map((d: any) => d.id));
+      }
       setLogs(logsRes.data || []);
       
       if (configRes.data?.aiBaseUrl && configRes.data?.aiApiKey) {
@@ -83,6 +118,60 @@ export default function Warmup() {
       console.error('Failed to load warmup data:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleToggleGroupDevice = (deviceId: string) => {
+    setSelectedGroupDeviceIds((prev) =>
+      prev.includes(deviceId) ? prev.filter((id) => id !== deviceId) : [...prev, deviceId]
+    );
+  };
+
+  const handleSelectAllGroupDevices = () => {
+    const connected = devices.filter((d) => d.status === 'CONNECTED');
+    setSelectedGroupDeviceIds(connected.map((d) => d.id));
+  };
+
+  const handleDeselectAllGroupDevices = () => {
+    setSelectedGroupDeviceIds([]);
+  };
+
+  const handleStartJoinGroups = async () => {
+    if (selectedGroupDeviceIds.length === 0) {
+      setAlert({ type: 'error', message: 'Silakan centang minimal satu perangkat WhatsApp yang ingin dimasukkan ke grup!' });
+      return;
+    }
+    const lines = groupLinksText
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.includes('chat.whatsapp.com/'));
+
+    if (lines.length === 0) {
+      setAlert({
+        type: 'error',
+        message: 'Silakan tempel (paste) minimal satu tautan grup valid (contoh: https://chat.whatsapp.com/KODE)!'
+      });
+      return;
+    }
+
+    try {
+      setJoiningGroups(true);
+      setAlert(null);
+      const res = await warmupService.joinGroups({
+        deviceIds: selectedGroupDeviceIds,
+        groupLinks: lines
+      });
+      if (res.data?.success) {
+        setAlert({ type: 'success', message: res.data.message });
+        setGroupLinksText('');
+        loadGroupTasks();
+      } else {
+        setAlert({ type: 'error', message: res.data?.error || 'Gagal menjadwalkan auto-join grup' });
+      }
+    } catch (err: any) {
+      setAlert({ type: 'error', message: err.response?.data?.error || err.message });
+    } finally {
+      setJoiningGroups(false);
     }
   };
 
@@ -272,18 +361,319 @@ export default function Warmup() {
         </div>
       )}
 
-      {/* Quick Metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Total Chat Selesai</span>
-            <MessageSquare className="w-4 h-4 text-emerald-500" />
-          </div>
-          <div className="text-2xl font-black text-slate-900 tracking-tight">
-            {logs.filter((l) => l.status === 'SENT').length}
-          </div>
-          <p className="text-xs text-slate-500 mt-1">Percakapan pemanasan sukses</p>
+      {/* Modern Warmup Method Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setActiveTab('groups')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+              activeTab === 'groups'
+                ? 'bg-white text-emerald-700 shadow-sm border border-slate-200/60'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+            }`}
+          >
+            <Users className="w-4 h-4 text-emerald-600" />
+            <span>👥 Auto-Join Group Warmup</span>
+            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+              REKOMENDASI AWET
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('p2p')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+              activeTab === 'p2p'
+                ? 'bg-white text-slate-900 shadow-sm border border-slate-200/60'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+            }`}
+          >
+            <Bot className="w-4 h-4 text-indigo-600" />
+            <span>💬 AI P2P Chat Warmup (9routes)</span>
+          </button>
         </div>
+
+        <div className="text-xs text-slate-500 font-medium px-3 flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-emerald-500" />
+          <span>Algoritma Aman & Anti-Banned</span>
+        </div>
+      </div>
+
+      {/* TAB 1: AUTO-JOIN GROUP WARMUP */}
+      {activeTab === 'groups' && (
+        <div className="space-y-6">
+          {/* Highlight Banner */}
+          <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 text-white rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
+            <div className="relative z-10 max-w-3xl">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-xs font-bold uppercase tracking-wider mb-4">
+                <ShieldCheck className="w-4 h-4" />
+                <span>Teknik Paling Efektif Agar WhatsApp Tahan Lama</span>
+              </div>
+              <h2 className="text-2xl sm:text-3xl font-black tracking-tight mb-2">
+                Auto-Join Komunitas & Pemanasan Grup
+              </h2>
+              <p className="text-slate-300 text-sm leading-relaxed">
+                Dengan memasukkan nomor WhatsApp ke dalam grup-grup aktif, nomor Anda akan <strong>menerima ratusan pesan alami per hari</strong> dari berbagai orang. Algoritma WhatsApp akan mencatat bahwa akun Anda adalah akun manusia aktif (sosial), sehingga <strong>Trust Score melonjak tinggi</strong> dan nomor menjadi kebal pembatasan atau banned!
+              </p>
+            </div>
+          </div>
+
+          {/* 2-Column Main Form & Live Status */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Left Column: Input Links & Target Devices */}
+            <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs flex flex-col gap-5">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+                    <Link2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">1. Masukkan Tautan Undangan Grup</h3>
+                    <p className="text-xs text-slate-500">Format: https://chat.whatsapp.com/KODE</p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-2">
+                  Daftar Link Grup WhatsApp (1 link per baris)
+                </label>
+                <textarea
+                  rows={6}
+                  value={groupLinksText}
+                  onChange={(e) => setGroupLinksText(e.target.value)}
+                  placeholder={'https://chat.whatsapp.com/AbCdEf1234567890\nhttps://chat.whatsapp.com/GhIjKl1234567890\nhttps://chat.whatsapp.com/MnOpQr1234567890'}
+                  className="w-full px-4 py-3 bg-slate-50 rounded-xl border border-slate-200 text-xs font-mono focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition-all placeholder:text-slate-400"
+                />
+                <div className="flex items-center justify-between mt-2 text-[11px] text-slate-500">
+                  <span>
+                    {groupLinksText.split('\n').filter((l) => l.trim().includes('chat.whatsapp.com/')).length} link grup terdeteksi
+                  </span>
+                  <span className="text-emerald-600 font-medium">Bisa input 1 hingga 30 link sekaligus</span>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-100 pt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <label className="text-xs font-bold text-slate-700">
+                    2. Pilih Perangkat WhatsApp untuk Auto-Join:
+                  </label>
+                  <div className="flex items-center gap-2 text-xs">
+                    <button
+                      onClick={handleSelectAllGroupDevices}
+                      className="text-emerald-600 hover:text-emerald-700 font-bold cursor-pointer"
+                    >
+                      Pilih Semua
+                    </button>
+                    <span className="text-slate-300">|</span>
+                    <button
+                      onClick={handleDeselectAllGroupDevices}
+                      className="text-slate-400 hover:text-slate-600 font-medium cursor-pointer"
+                    >
+                      Hapus
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-56 overflow-y-auto pr-1">
+                  {devices.map((dev) => {
+                    const isSelected = selectedGroupDeviceIds.includes(dev.id);
+                    const isOnline = dev.status === 'CONNECTED';
+                    return (
+                      <div
+                        key={dev.id}
+                        onClick={() => handleToggleGroupDevice(dev.id)}
+                        className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                          isSelected
+                            ? 'bg-emerald-50/70 border-emerald-300 text-slate-900 shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 truncate">
+                          <div
+                            className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                              isSelected ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 bg-white'
+                            }`}
+                          >
+                            {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                          </div>
+                          <div className="truncate">
+                            <div className="font-bold text-xs truncate flex items-center gap-1.5">
+                              <span>{dev.name}</span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono">+{dev.phoneNumber}</div>
+                          </div>
+                        </div>
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            isOnline ? 'bg-emerald-500' : 'bg-slate-300'
+                          }`}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2.5 text-xs text-amber-800">
+                <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <p>
+                  <strong>Jeda Aman Otomatis:</strong> HP akan membuka link dan mengklik <em>"Gabung ke grup"</em> secara bergiliran dengan jeda 15–20 detik per grup agar pergerakan terlihat natural bagi WhatsApp.
+                </p>
+              </div>
+
+              <button
+                onClick={handleStartJoinGroups}
+                disabled={joiningGroups || selectedGroupDeviceIds.length === 0}
+                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {joiningGroups ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                    <span>Menjadwalkan Tugas Auto-Join...</span>
+                  </>
+                ) : (
+                  <>
+                    <Users className="w-4 h-4" />
+                    <span>🚀 Mulai Auto-Join ke Grup Sekarang</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Right Column: Realtime Task Report */}
+            <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs flex flex-col gap-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center font-bold">
+                    <Layers className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">Laporan & Antrean Auto-Join</h3>
+                    <p className="text-xs text-slate-500">Status pengerjaan otomatis di HP</p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={loadGroupTasks}
+                  disabled={fetchingTasks}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-600 cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${fetchingTasks ? 'animate-spin text-emerald-600' : ''}`} />
+                  <span>Segarkan</span>
+                </button>
+              </div>
+
+              {/* Tasks List */}
+              <div className="max-h-[480px] overflow-y-auto space-y-2.5 pr-1">
+                {groupTasks.length === 0 ? (
+                  <div className="text-center py-12 text-slate-400">
+                    <Users className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+                    <p className="font-bold text-sm text-slate-600">Belum ada tugas auto-join</p>
+                    <p className="text-xs text-slate-400 mt-1 max-w-xs mx-auto">
+                      Masukkan link grup WhatsApp di samping lalu klik tombol Mulai untuk menjalankan proses.
+                    </p>
+                  </div>
+                ) : (
+                  groupTasks.map((t) => (
+                    <div
+                      key={t.id}
+                      className="p-3.5 rounded-xl border border-slate-100 hover:border-slate-200 bg-slate-50/50 flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="truncate">
+                        <div className="font-bold text-slate-900 truncate flex items-center gap-2">
+                          <span>{t.deviceName || 'Perangkat'}</span>
+                          <span className="text-[10px] text-slate-400 font-mono font-normal">
+                            {new Date(t.createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          </span>
+                        </div>
+                        <a
+                          href={t.inviteUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-emerald-600 hover:underline truncate text-[11px] font-mono block mt-0.5"
+                        >
+                          {t.inviteUrl}
+                        </a>
+                        {t.error && (
+                          <div className="text-rose-600 text-[10px] mt-1 font-medium">⚠️ {t.error}</div>
+                        )}
+                      </div>
+
+                      <div className="shrink-0">
+                        {t.status === 'SUCCESS' ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            SUKSES
+                          </span>
+                        ) : t.status === 'FAILED' ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">
+                            <XCircle className="w-3 h-3 text-rose-600" />
+                            GAGAL
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                            <RefreshCw className="w-3 h-3 text-amber-600 animate-spin" />
+                            MENGANTRE
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* 3 Tips Taktis Card di Bawah */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+              <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold mb-3">
+                1
+              </div>
+              <h4 className="font-bold text-slate-900 text-sm mb-1">Grup Publik / Komunitas</h4>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Cari link grup WhatsApp publik di internet (grup hobi, diskusi daerah, komunitas, jual-beli bebas). Masukkan nomor Anda ke sana untuk menikmati banjir lalu-lintas pesan masuk alami.
+              </p>
+            </div>
+
+            <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+              <div className="w-8 h-8 rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center font-bold mb-3">
+                2
+              </div>
+              <h4 className="font-bold text-slate-900 text-sm mb-1">Grup Internal (Antar Nomor Sendiri)</h4>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Anda juga bisa membuat 1 grup privat khusus untuk mengumpulkan nomor-nomor WhatsApp Anda. Sistem WAGTW bisa membuat nomor-nomor tersebut saling sapa otomatis di grup tanpa diganggu orang luar.
+              </p>
+            </div>
+
+            <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+              <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold mb-3">
+                3
+              </div>
+              <h4 className="font-bold text-slate-900 text-sm mb-1">Inbound Chat Funnel</h4>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Hindari spam di grup. Sebaliknya, cantumkan link wa.me/nomor-anda agar anggota grup yang menghubungi Anda duluan. Membalas chat orang lain adalah 100% aman!
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: AI P2P CHAT WARMUP (9routes) */}
+      {activeTab === 'p2p' && (
+        <div className="space-y-6">
+          {/* Quick Metrics */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+              <div className="flex items-center justify-between text-slate-400 mb-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Total Chat Selesai</span>
+                <MessageSquare className="w-4 h-4 text-emerald-500" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 tracking-tight">
+                {logs.filter((l) => l.status === 'SENT').length}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Percakapan pemanasan sukses</p>
+            </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
           <div className="flex items-center justify-between text-slate-400 mb-2">
@@ -854,5 +1244,7 @@ export default function Warmup() {
         </div>
       </div>
     </div>
-  );
+    )}
+  </div>
+);
 }

@@ -1,12 +1,52 @@
 import { Request, Response } from 'express';
 import { prisma } from '@wagtw/database';
 
-// In-memory queue for pending outbound messages to be dispatched to Android Agent
-const pendingAgentMessages = new Map<string, Array<{ id: string; to: string; text: string }>>();
+// In-memory queue for pending outbound messages / tasks to be dispatched to Android Agent
+export interface AgentQueueItem {
+  id: string;
+  type?: 'MESSAGE' | 'JOIN_GROUP';
+  to?: string;
+  text?: string;
+  inviteUrl?: string;
+}
+
+export interface GroupJoinTask {
+  id: string;
+  deviceId: string;
+  deviceName?: string;
+  inviteUrl: string;
+  status: 'PENDING' | 'SUCCESS' | 'FAILED';
+  error?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const pendingAgentMessages = new Map<string, Array<AgentQueueItem>>();
+const groupJoinTasks: GroupJoinTask[] = [];
+
+export const getGroupJoinTasks = () => groupJoinTasks;
 
 export const enqueueAgentMessage = (deviceId: string, id: string, to: string, text: string) => {
   const list = pendingAgentMessages.get(deviceId) || [];
-  list.push({ id, to, text });
+  list.push({ id, type: 'MESSAGE', to, text });
+  pendingAgentMessages.set(deviceId, list);
+};
+
+export const enqueueAgentGroupJoin = (deviceId: string, id: string, inviteUrl: string, deviceName?: string) => {
+  const task: GroupJoinTask = {
+    id,
+    deviceId,
+    deviceName,
+    inviteUrl,
+    status: 'PENDING',
+    createdAt: new Date(),
+    updatedAt: new Date()
+  };
+  groupJoinTasks.unshift(task);
+  if (groupJoinTasks.length > 200) groupJoinTasks.pop();
+
+  const list = pendingAgentMessages.get(deviceId) || [];
+  list.push({ id, type: 'JOIN_GROUP', inviteUrl });
   pendingAgentMessages.set(deviceId, list);
 };
 
@@ -244,14 +284,22 @@ export const getPendingMessages = async (req: Request, res: Response) => {
 // 4. Update message status
 export const updateMessageStatus = async (req: Request, res: Response) => {
   const { messageId, status, error } = req.body;
-  console.log(`[Android Agent] Message ${messageId} status: ${status} ${error ? `(${error})` : ''}`);
+  console.log(`[Android Agent] Message/Task ${messageId} status: ${status} ${error ? `(${error})` : ''}`);
+
+  // Check group join tasks
+  const gTask = groupJoinTasks.find(t => t.id === messageId);
+  if (gTask) {
+    gTask.status = (status === 'SENT' || status === 'JOINED' || status === 'SUCCESS') ? 'SUCCESS' : 'FAILED';
+    gTask.error = error || undefined;
+    gTask.updatedAt = new Date();
+  }
 
   if (messageId) {
     try {
       await prisma.messageLog.updateMany({
         where: { id: messageId },
         data: {
-          status: status === 'SENT' ? 'SENT' : 'FAILED',
+          status: (status === 'SENT' || status === 'JOINED' || status === 'SUCCESS') ? 'SENT' : 'FAILED',
           error: error || null
         }
       });
@@ -281,4 +329,53 @@ export const disconnectAgent = async (req: Request, res: Response) => {
   }
 
   res.json({ success: true, message: 'Agent disconnected successfully' });
+};
+
+// 6. Join groups queue (Warmup Auto-Join Groups)
+export const joinGroupBatch = async (req: Request, res: Response) => {
+  const { deviceIds = [], groupLinks = [] } = req.body;
+
+  if (!Array.isArray(deviceIds) || deviceIds.length === 0) {
+    return res.status(400).json({ success: false, error: 'Pilih minimal satu perangkat (deviceId).' });
+  }
+
+  if (!Array.isArray(groupLinks) || groupLinks.length === 0) {
+    return res.status(400).json({ success: false, error: 'Masukkan minimal satu tautan grup WhatsApp.' });
+  }
+
+  // Clean URLs
+  const cleanUrls = groupLinks
+    .map((l: string) => l.trim())
+    .filter((l: string) => l.includes('chat.whatsapp.com/'));
+
+  if (cleanUrls.length === 0) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Format tautan grup tidak valid. Harus mengandung tautan seperti https://chat.whatsapp.com/KODE_UNDANGAN' 
+    });
+  }
+
+  const devices = await prisma.device.findMany({
+    where: { id: { in: deviceIds } }
+  });
+
+  let enqueuedCount = 0;
+  for (const dev of devices) {
+    for (const url of cleanUrls) {
+      const taskId = `group_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      enqueueAgentGroupJoin(dev.id, taskId, url, dev.name);
+      enqueuedCount++;
+    }
+  }
+
+  res.json({
+    success: true,
+    message: `Berhasil menjadwalkan ${enqueuedCount} tugas auto-join ke grup untuk ${devices.length} perangkat.`,
+    tasksCount: enqueuedCount
+  });
+};
+
+// 7. Get Group Tasks
+export const getGroupTasksList = async (req: Request, res: Response) => {
+  res.json({ success: true, tasks: groupJoinTasks });
 };

@@ -103,6 +103,8 @@ export const warmupService = {
   getPersonas: () => api.get('/warmup/personas'),
   getLogs: (limit = 50) => api.get(`/warmup/logs?limit=${limit}`),
   triggerManual: () => api.post('/warmup/trigger'),
+  joinGroups: (data: { deviceIds: string[]; groupLinks: string[] }) => api.post('/warmup/groups/join', data),
+  getGroupTasks: () => api.get('/warmup/groups/tasks'),
 };
 
 export const authService = {
