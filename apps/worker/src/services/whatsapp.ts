@@ -3,7 +3,7 @@ import { prisma } from '@wagtw/database';
 import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 import { aiService } from './ai';
 import { telegramNotifier } from './telegram';
 
@@ -210,6 +210,11 @@ class WhatsAppManager {
       // ignore
     }
 
+    // Kill any orphan Chrome process for this specific session before starting a new one
+    try {
+      execSync(`pkill -9 -f ${safeSession} || true`);
+    } catch (e) {}
+
     try {
       const client = await wppconnect.create({
         session: safeSession,
@@ -282,7 +287,14 @@ class WhatsAppManager {
           '--disable-blink-features=AutomationControlled',
           '--disable-infobars',
           '--window-size=1280,800',
-          '--disable-features=IsolateOrigins,site-per-process'
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--js-flags=--max-old-space-size=256',
+          '--renderer-process-limit=1',
+          '--disable-extensions',
+          '--disable-component-extensions-with-background-pages',
+          '--disable-default-apps',
+          '--mute-audio',
+          '--no-default-browser-check'
         ],
       });
 
@@ -1391,6 +1403,9 @@ class WhatsAppManager {
     }
     await Promise.allSettled(closePromises);
     this.sessions.clear();
+    try {
+      execSync('pkill -9 -f chrome || true');
+    } catch {}
     console.log('[Worker Shutdown] All browser sessions closed cleanly.');
   }
 }
