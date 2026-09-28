@@ -28,10 +28,14 @@ const handleSessionCreate = async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'deviceId is required' });
   }
 
-  // Non-blocking sequential queue
-  waManager.enqueueSession(id, name, false);
-  waManager.returnToQrScreen(id);
-  res.json({ message: 'Session initialization queued', deviceId: id });
+  // If session is already alive in memory, try instant QR refresh first
+  const refreshed = await waManager.refreshQr(id);
+  if (!refreshed) {
+    // Non-blocking sequential queue for launching new browser
+    waManager.enqueueSession(id, name, false);
+  }
+
+  res.json({ message: 'Session initialization queued', deviceId: id, fastRefreshed: refreshed });
 };
 
 app.post('/sessions/:id', handleSessionCreate);

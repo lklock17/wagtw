@@ -38,6 +38,14 @@ export const connectDevice = async (req: Request, res: Response) => {
     const device = await prisma.device.findUnique({ where: { id } });
     if (!device) return res.status(404).json({ error: 'Device not found' });
     
+    // Only set status to QR_READY if not CONNECTED; keep existing qrCode so UI doesn't flicker/freeze
+    if (device.status !== 'CONNECTED') {
+      await prisma.device.update({
+        where: { id },
+        data: { status: 'QR_READY' }
+      });
+    }
+
     await axios.post(`${WORKER_URL}/sessions/${id}`, { name: device.name, deviceId: id });
     res.json({ message: 'Connection started' });
   } catch (error: any) {

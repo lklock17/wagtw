@@ -30,6 +30,40 @@ class WhatsAppManager {
   private loggedOutDevices: Set<string> = new Set();
   private closingDevices: Set<string> = new Set();
   private authenticatedSessions: Set<string> = new Set();
+  private failedAutoRecovery: Set<string> = new Set();
+
+  async isSessionTrulyConnected(client: wppconnect.Whatsapp): Promise<{ connected: boolean; phone: string | null }> {
+    try {
+      const isLogged = await client.isLoggedIn().catch(() => false);
+      if (!isLogged) return { connected: false, phone: null };
+
+      let phone: string | null = null;
+      try {
+        const rawWid = await client.getWid();
+        if (rawWid) {
+          phone = rawWid.replace(/[^0-9]/g, '');
+        }
+      } catch {}
+
+      if (!phone) {
+        try {
+          const info = await client.getHostDevice();
+          const p = info?.wid?.user || (info as any)?.id?.user || (info as any)?.phoneNumber;
+          if (p) {
+            phone = String(p).replace(/[^0-9]/g, '');
+          }
+        } catch {}
+      }
+
+      if (!phone || phone.length < 5) {
+        return { connected: false, phone: null };
+      }
+
+      return { connected: true, phone };
+    } catch {
+      return { connected: false, phone: null };
+    }
+  }
 
   private sessionQueue: Array<{ deviceId: string; sessionName: string; isAutoRecovery: boolean }> = [];
   private isProcessingQueue: boolean = false;
@@ -38,14 +72,17 @@ class WhatsAppManager {
     // 1. Start continuous auto-recovery background watcher
     this.startAutoRecoveryWatcher();
 
-    // 2. Queue paired devices sequentially one by one so CPU and memory stay healthy
+    // 2. Queue ONLY actively connected paired devices sequentially one by one
     const devices = await prisma.device.findMany({
-      where: { phoneNumber: { not: null } },
+      where: { 
+        phoneNumber: { not: null },
+        status: 'CONNECTED'
+      },
       orderBy: { updatedAt: 'desc' }
     });
 
     for (const device of devices) {
-      console.log(`[Worker Init] Queueing paired device for connection: ${device.name} (${device.id})`);
+      console.log(`[Worker Init] Queueing active connected device: ${device.name} (${device.id})`);
       this.enqueueSession(device.id, device.name, true);
     }
   }
@@ -54,7 +91,12 @@ class WhatsAppManager {
     if (this.sessionQueue.some((item) => item.deviceId === deviceId) || this.inProgressSessions.has(deviceId)) {
       return;
     }
-    this.sessionQueue.push({ deviceId, sessionName, isAutoRecovery });
+    if (!isAutoRecovery) {
+      // User manual requests get TOP priority at the FRONT of queue
+      this.sessionQueue.unshift({ deviceId, sessionName, isAutoRecovery });
+    } else {
+      this.sessionQueue.push({ deviceId, sessionName, isAutoRecovery });
+    }
     this.processQueue();
   }
 
@@ -112,16 +154,27 @@ class WhatsAppManager {
 
       const client = this.sessions.get(device.id);
       if (client) {
-        let isConn = false;
-        try {
-          isConn = await client.isConnected();
-        } catch {
-          isConn = false;
-        }
+        const { connected, phone } = await this.isSessionTrulyConnected(client);
 
-        if (isConn) {
-          if (device.status !== 'CONNECTED') {
-            await this.updateDeviceStatus(device.id, 'CONNECTED', null);
+        if (connected && phone) {
+          if (device.status !== 'CONNECTED' || !device.phoneNumber) {
+            await prisma.device.update({
+              where: { id: device.id },
+              data: {
+                status: 'CONNECTED',
+                phoneNumber: phone,
+                qrCode: null,
+                lastConnected: new Date()
+              }
+            });
+            this.authenticatedSessions.add(device.id);
+          }
+        } else {
+          // Client instance running in memory but NOT logged in (e.g. waiting for QR scan)
+          // NEVER mark as CONNECTED. Correct false CONNECTED status if present in DB
+          if (device.status === 'CONNECTED') {
+            await this.updateDeviceStatus(device.id, 'DISCONNECTED', null);
+            this.authenticatedSessions.delete(device.id);
           }
         }
       } else {
@@ -131,12 +184,13 @@ class WhatsAppManager {
           continue;
         }
 
-        // Only auto-recover paired devices that are NOT logged out, NOT closing, and NOT in QR_READY
+        // Only auto-recover paired devices that are NOT logged out, NOT closing, NOT in QR_READY, and didn't fail auto-recovery
         if (
           device.phoneNumber && 
           device.status !== 'QR_READY' && 
           !this.loggedOutDevices.has(device.id) &&
-          !this.closingDevices.has(device.id)
+          !this.closingDevices.has(device.id) &&
+          !this.failedAutoRecovery.has(device.id)
         ) {
           console.log(`[AutoRecoveryWatcher] Enqueueing disconnected paired device: ${device.name} (${device.id})...`);
           this.lastAttemptTime.set(device.id, Date.now());
@@ -161,28 +215,37 @@ class WhatsAppManager {
       return;
     }
 
-    // If user clicked manually from dashboard, reset logged-out and alert flags
+    // If user clicked manually from dashboard, reset logged-out, alert flags, and failed auto-recovery
     if (!isAutoRecovery) {
       this.loggedOutDevices.delete(deviceId);
       this.loggedOutNotified.delete(deviceId);
       this.disconnectedAlertSent.delete(deviceId);
       this.closingDevices.delete(deviceId);
+      this.failedAutoRecovery.delete(deviceId);
     }
 
     // Clean up any old or dead client for this device first
     const existingClient = this.sessions.get(deviceId);
     if (existingClient) {
-      let isConn = false;
-      try {
-        isConn = await existingClient.isConnected();
-      } catch {
-        isConn = false;
-      }
-      if (isConn) {
-        console.log(`[createSession] Client for ${deviceId} is already connected.`);
-        await this.handleConnectionSuccess(deviceId, sessionName, dev.phoneNumber);
+      const { connected, phone } = await this.isSessionTrulyConnected(existingClient);
+      if (connected && phone) {
+        console.log(`[createSession] Client for ${deviceId} is already connected (Phone: ${phone}).`);
+        await this.handleConnectionSuccess(deviceId, sessionName, phone);
         return;
       }
+
+      // If browser instance is already open and on the QR screen, refresh QR immediately!
+      const page = (existingClient as any).page;
+      if (page && !page.isClosed()) {
+        console.log(`[createSession] Active browser found for ${deviceId}. Refreshing QR code directly...`);
+        const refreshed = await this.refreshQr(deviceId);
+        if (refreshed) {
+          console.log(`[createSession] Instant QR refresh succeeded for ${deviceId}, avoiding browser recreation.`);
+          return;
+        }
+      }
+
+      console.log(`[createSession] Existing client for ${deviceId} is dead or cannot be refreshed. Closing old instance...`);
       try {
         await existingClient.close();
       } catch {}
@@ -221,7 +284,25 @@ class WhatsAppManager {
         folderNameToken: TOKENS_BASE_DIR,
         catchQR: (base64Qr, asciiQR, attempts, urlCode) => {
           console.log(`[catchQR] Device ${deviceId} (${sessionName}) QR ready (attempt ${attempts})`);
+          if (isAutoRecovery) {
+            this.failedAutoRecovery.add(deviceId);
+          }
           this.updateDeviceStatus(deviceId, 'QR_READY', base64Qr);
+
+          // If QR has been waiting unscanned for > 20 attempts (~6-7 mins), close to free RAM/CPU
+          if (attempts > 20 && !this.closingDevices.has(deviceId)) {
+            console.log(`[catchQR] Device ${deviceId} QR scan expired after ${attempts} attempts. Closing browser to free RAM/CPU.`);
+            this.closingDevices.add(deviceId);
+            this.updateDeviceStatus(deviceId, 'DISCONNECTED', null);
+            this.inProgressSessions.delete(deviceId);
+            this.reconnectingDevices.delete(deviceId);
+            const activeClient = this.sessions.get(deviceId);
+            if (activeClient) {
+              try { activeClient.close(); } catch {}
+              this.sessions.delete(deviceId);
+            }
+            setTimeout(() => this.closingDevices.delete(deviceId), 5000);
+          }
         },
         statusFind: (statusSession: any, session: string) => {
           console.log(`[StatusFind] Device ${deviceId} (${sessionName}): ${statusSession} [${session}]`);
@@ -230,6 +311,7 @@ class WhatsAppManager {
             statusSession === 'qrReadSuccess' ||
             statusSession === 'inChat'
           ) {
+            this.failedAutoRecovery.delete(deviceId);
             this.handleConnectionSuccess(deviceId, sessionName);
           } else if (
             statusSession === 'desconnectedMobile' || 
@@ -416,14 +498,10 @@ class WhatsAppManager {
       }
     }
 
+    // STRICT: Cannot mark CONNECTED without a confirmed phone number from active session!
+    // Never fall back to stale dev.phoneNumber from database!
     if (!resolvedPhone) {
-      const dev = await prisma.device.findUnique({ where: { id: deviceId } });
-      resolvedPhone = dev?.phoneNumber || null;
-    }
-
-    // STRICT: Cannot mark CONNECTED without a confirmed phone number!
-    if (!resolvedPhone) {
-      console.log(`[handleConnectionSuccess] Device ${deviceId} (${sessionName}) has NO phone number yet. Waiting for QR scan.`);
+      console.log(`[handleConnectionSuccess] Device ${deviceId} (${sessionName}) has NO confirmed phone number from active session. Waiting for QR scan.`);
       return;
     }
 
@@ -679,16 +757,11 @@ class WhatsAppManager {
 
         const client = this.sessions.get(deviceId);
         if (client) {
-          let isConn = false;
-          try {
-            isConn = await client.isConnected();
-          } catch {
-            isConn = false;
-          }
+          const { connected, phone } = await this.isSessionTrulyConnected(client);
 
-          if (isConn) {
-            console.log(`[Auto-Reconnect] Device ${deviceId} recovered naturally!`);
-            await this.handleConnectionSuccess(deviceId, sessionName, checkDev.phoneNumber);
+          if (connected && phone) {
+            console.log(`[Auto-Reconnect] Device ${deviceId} recovered naturally! Phone: ${phone}`);
+            await this.handleConnectionSuccess(deviceId, sessionName, phone);
             return;
           }
 
@@ -720,9 +793,10 @@ class WhatsAppManager {
       if (state === 'CONNECTED') {
         await this.handleConnectionSuccess(deviceId, sessionName);
       } else if (state === 'UNPAIRED') {
-        const wasAuthenticated = this.authenticatedSessions.has(deviceId);
+        const dev = await prisma.device.findUnique({ where: { id: deviceId } });
+        const wasAuthenticated = this.authenticatedSessions.has(deviceId) || Boolean(dev?.phoneNumber);
         if (wasAuthenticated) {
-          console.log(`[onStateChange] Device ${deviceId} (${sessionName}) was authenticated but is now UNPAIRED. Logging out.`);
+          console.log(`[onStateChange] Device ${deviceId} (${sessionName}) was paired/authenticated but is now UNPAIRED. Logging out.`);
           this.authenticatedSessions.delete(deviceId);
           await this.handleTrueLogout(deviceId, sessionName);
         } else {
@@ -1040,7 +1114,11 @@ class WhatsAppManager {
   }
 
   async getClient(deviceId: string) {
-    return this.sessions.get(deviceId);
+    const client = this.sessions.get(deviceId);
+    if (!client) return null;
+    const { connected } = await this.isSessionTrulyConnected(client);
+    if (!connected) return null;
+    return client;
   }
 
   async returnToQrScreen(deviceId: string) {
@@ -1067,6 +1145,40 @@ class WhatsAppManager {
       console.log(`[returnToQrScreen] Switched WhatsApp Web back to QR code screen for ${deviceId}`);
     } catch (e: any) {
       console.warn(`[returnToQrScreen] Could not switch back to QR:`, e.message);
+    }
+  }
+
+  async refreshQr(deviceId: string): Promise<boolean> {
+    const client = this.sessions.get(deviceId);
+    if (!client) return false;
+    const page = (client as any).page;
+    if (!page || page.isClosed()) return false;
+    try {
+      await this.returnToQrScreen(deviceId);
+
+      // Scrape fresh QR (this automatically clicks the reload button on expired QR in WhatsApp Web)
+      if (typeof (client as any).getQrCode === 'function') {
+        const qrData = await (client as any).getQrCode();
+        if (qrData?.base64Image) {
+          console.log(`[refreshQr] Direct QR refresh succeeded for ${deviceId}`);
+          await this.updateDeviceStatus(deviceId, 'QR_READY', qrData.base64Image);
+          return true;
+        }
+      }
+
+      if (typeof (client as any).checkQrCode === 'function') {
+        await (client as any).checkQrCode();
+      }
+
+      // Check if DB already has a QR code
+      const dev = await prisma.device.findUnique({ where: { id: deviceId } });
+      if (dev?.qrCode) {
+        return true;
+      }
+      return false;
+    } catch (e: any) {
+      console.warn(`[refreshQr] Direct QR refresh failed:`, e.message);
+      return false;
     }
   }
 

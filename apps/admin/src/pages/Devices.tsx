@@ -53,6 +53,7 @@ export default function Devices() {
   const [requestingPairingCode, setRequestingPairingCode] = useState(false);
   const [pairingError, setPairingError] = useState<string | null>(null);
   const [pairingCopied, setPairingCopied] = useState(false);
+  const [refreshingQr, setRefreshingQr] = useState(false);
 
   // Webhook Modal
   const [webhookDevice, setWebhookDevice] = useState<any | null>(null);
@@ -119,6 +120,8 @@ export default function Devices() {
   const handleConnect = async (device: any) => {
     setConnectingId(device.id);
     setJustConnected(false);
+    const hasQr = Boolean(device.qrCode);
+    setRefreshingQr(!hasQr);
     setQrModalDevice(device);
     setConnectTab('qr');
     setPairingPhone(device.phoneNumber || '');
@@ -130,17 +133,40 @@ export default function Devices() {
     } catch (err: any) {
       alert(err.response?.data?.error || 'Gagal memulai koneksi');
     } finally {
-      setTimeout(() => setConnectingId(null), 2500);
+      setTimeout(() => {
+        setConnectingId(null);
+        setRefreshingQr(false);
+      }, 1000);
+    }
+  };
+
+  const handleRefreshQr = async () => {
+    if (!qrModalDevice) return;
+    setRefreshingQr(true);
+    try {
+      await deviceService.connectDevice(qrModalDevice.id);
+      await new Promise((r) => setTimeout(r, 600));
+      await fetchDevices();
+    } catch (err: any) {
+      console.error('Failed to refresh QR:', err);
+    } finally {
+      setTimeout(() => setRefreshingQr(false), 800);
     }
   };
 
   const handleSwitchToQrTab = async () => {
     setConnectTab('qr');
     if (qrModalDevice && qrModalDevice.status !== 'CONNECTED') {
+      if (!qrModalDevice.qrCode) {
+        setRefreshingQr(true);
+      }
       try {
         await deviceService.connectDevice(qrModalDevice.id);
         fetchDevices();
       } catch {}
+      finally {
+        setTimeout(() => setRefreshingQr(false), 800);
+      }
     }
   };
 
@@ -467,7 +493,7 @@ export default function Devices() {
                 {/* Action Footer */}
                 <div className="bg-slate-50/80 px-3.5 py-2 border-t border-slate-100 flex items-center justify-between gap-1.5">
                   <div className="flex items-center gap-1.5">
-                    {(isConnected || isAndroidAgent || device.phoneNumber) ? (
+                    {isConnected ? (
                       <>
                         <button 
                           onClick={() => {
@@ -517,7 +543,7 @@ export default function Devices() {
                         ) : (
                           <QrCode className="w-3 h-3" />
                         )}
-                        <span>{isQR ? 'Buka QR / Pairing' : isConnecting ? 'Menghubungkan...' : 'Hubungkan'}</span>
+                        <span>{isQR ? 'Buka QR / Pairing' : isConnecting ? 'Menghubungkan...' : device.phoneNumber ? 'Hubungkan Ulang' : 'Hubungkan'}</span>
                       </button>
                     )}
 
@@ -682,9 +708,9 @@ export default function Devices() {
                         </p>
                       </div>
                     </div>
-                  ) : qrModalDevice.qrCode ? (
-                    <div className="space-y-5">
-                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 inline-block shadow-inner">
+                  ) : (qrModalDevice.qrCode && !refreshingQr) ? (
+                    <div className="space-y-5 animate-in fade-in zoom-in-95 duration-200">
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 inline-block shadow-inner relative group">
                         <img 
                           src={qrModalDevice.qrCode} 
                           alt="WhatsApp QR Code" 
@@ -695,14 +721,12 @@ export default function Devices() {
                       <div className="flex justify-center">
                         <button
                           type="button"
-                          onClick={() => {
-                            deviceService.connectDevice(qrModalDevice.id);
-                            fetchDevices();
-                          }}
-                          className="px-3.5 py-1.5 text-xs text-emerald-700 hover:text-emerald-800 font-bold bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5 border border-emerald-200"
+                          disabled={refreshingQr}
+                          onClick={handleRefreshQr}
+                          className="px-3.5 py-1.5 text-xs text-emerald-700 hover:text-emerald-800 font-bold bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-all cursor-pointer inline-flex items-center gap-1.5 border border-emerald-200 active:scale-95 disabled:opacity-50 shadow-xs"
                         >
-                          <RefreshCw className="w-3.5 h-3.5" />
-                          <span>Segarkan QR Code</span>
+                          <RefreshCw className={clsx("w-3.5 h-3.5", refreshingQr && "animate-spin")} />
+                          <span>{refreshingQr ? 'Membuat QR Baru...' : 'Segarkan QR Code'}</span>
                         </button>
                       </div>
 
@@ -720,21 +744,18 @@ export default function Devices() {
                       </div>
                     </div>
                   ) : (
-                    <div className="py-16 flex flex-col items-center justify-center gap-3">
-                      <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
-                      <p className="text-sm font-bold text-slate-800">Sedang Menyiapkan QR Code...</p>
-                      <p className="text-xs text-slate-400">Chromium sedang memuat WhatsApp Web di server.</p>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          deviceService.connectDevice(qrModalDevice.id);
-                          fetchDevices();
-                        }}
-                        className="mt-2 px-3.5 py-1.5 text-xs text-slate-600 hover:text-emerald-700 font-bold bg-slate-100 hover:bg-emerald-50 rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        <span>Minta QR Baru</span>
-                      </button>
+                    <div className="py-16 flex flex-col items-center justify-center gap-3 animate-in fade-in duration-150">
+                      <div className="relative flex items-center justify-center">
+                        <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center">
+                          <Loader2 className="w-8 h-8 text-emerald-600 animate-spin" />
+                        </div>
+                      </div>
+                      <p className="text-sm font-bold text-slate-800">
+                        {refreshingQr ? 'Sedang Membuat QR Code Baru...' : 'Sedang Menyiapkan QR Code...'}
+                      </p>
+                      <p className="text-xs text-slate-400 max-w-xs text-center">
+                        Harap tunggu beberapa detik, Chromium di server sedang merefresh sesi WhatsApp.
+                      </p>
                     </div>
                   )
                 ) : (

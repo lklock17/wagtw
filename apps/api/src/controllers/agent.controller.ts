@@ -305,7 +305,10 @@ export const getPendingMessages = async (req: Request, res: Response) => {
   if (ids.length > 0) {
     try {
       await prisma.device.updateMany({
-        where: { id: { in: ids } },
+        where: { 
+          id: { in: ids },
+          sessionData: { contains: 'ANDROID_AGENT' }
+        },
         data: { status: 'CONNECTED', lastConnected: new Date() }
       });
     } catch (e) {}
