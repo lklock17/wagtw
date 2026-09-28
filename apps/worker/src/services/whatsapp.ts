@@ -34,8 +34,31 @@ class WhatsAppManager {
 
   async isSessionTrulyConnected(client: wppconnect.Whatsapp): Promise<{ connected: boolean; phone: string | null }> {
     try {
-      const isLogged = await client.isLoggedIn().catch(() => false);
-      if (!isLogged) return { connected: false, phone: null };
+      // Check multiple auth indicators: isAuthenticated, isMainLoaded, isMainReady, or isLoggedIn
+      let isAuth = false;
+      try {
+        if (typeof (client as any).isAuthenticated === 'function') {
+          isAuth = await (client as any).isAuthenticated();
+        }
+      } catch {}
+
+      if (!isAuth) {
+        try {
+          if (typeof (client as any).isMainLoaded === 'function') {
+            isAuth = await (client as any).isMainLoaded();
+          }
+        } catch {}
+      }
+
+      if (!isAuth) {
+        try {
+          isAuth = await client.isLoggedIn();
+        } catch {
+          isAuth = false;
+        }
+      }
+
+      if (!isAuth) return { connected: false, phone: null };
 
       let phone: string | null = null;
       try {
@@ -51,6 +74,25 @@ class WhatsAppManager {
           const p = info?.wid?.user || (info as any)?.id?.user || (info as any)?.phoneNumber;
           if (p) {
             phone = String(p).replace(/[^0-9]/g, '');
+          }
+        } catch {}
+      }
+
+      if (!phone) {
+        try {
+          const page = (client as any).page;
+          if (page && !page.isClosed()) {
+            const domPhone = await page.evaluate(() => {
+              const lastWid = window.localStorage.getItem('last-wid');
+              if (lastWid) return lastWid;
+              const wpp = (window as any).WPP;
+              return wpp?.conn?.getMyUserId()?.user ||
+                     wpp?.conn?.getMyUserWid()?.user ||
+                     null;
+            });
+            if (domPhone) {
+              phone = String(domPhone).replace(/[^0-9]/g, '');
+            }
           }
         } catch {}
       }
@@ -170,9 +212,10 @@ class WhatsAppManager {
             this.authenticatedSessions.add(device.id);
           }
         } else {
-          // Client instance running in memory but NOT logged in (e.g. waiting for QR scan)
-          // NEVER mark as CONNECTED. Correct false CONNECTED status if present in DB
-          if (device.status === 'CONNECTED') {
+          // Only mark as DISCONNECTED if the page was actually closed
+          const page = (client as any).page;
+          const isPageClosed = !page || page.isClosed();
+          if (isPageClosed && device.status === 'CONNECTED') {
             await this.updateDeviceStatus(device.id, 'DISCONNECTED', null);
             this.authenticatedSessions.delete(device.id);
           }
@@ -314,7 +357,10 @@ class WhatsAppManager {
             this.failedAutoRecovery.delete(deviceId);
             this.handleConnectionSuccess(deviceId, sessionName);
           } else if (
-            statusSession === 'desconnectedMobile' || 
+            statusSession === 'desconnectedMobile'
+          ) {
+            console.log(`[StatusFind] Device ${deviceId} (${sessionName}): Phone cellular network changed (${statusSession}), maintaining WhatsApp Web session.`);
+          } else if (
             statusSession === 'browserClose' || 
             statusSession === 'serverClose'
           ) {
@@ -507,6 +553,14 @@ class WhatsAppManager {
 
     this.loggedOutNotified.delete(deviceId);
     this.reconnectingDevices.delete(deviceId);
+
+    // Cancel pending reconnect timer!
+    const pendingReconnect = this.reconnectTimers.get(deviceId);
+    if (pendingReconnect) {
+      clearTimeout(pendingReconnect);
+      this.reconnectTimers.delete(deviceId);
+      console.log(`[handleConnectionSuccess] Canceled pending reconnect timer for ${deviceId}`);
+    }
 
     // Cancel pending disconnect alert timer if connection recovered naturally within grace period!
     const pendingTimer = this.disconnectAlertTimers.get(deviceId);
@@ -750,7 +804,7 @@ class WhatsAppManager {
         }
 
         const checkDev = await prisma.device.findUnique({ where: { id: deviceId } });
-        if (!checkDev || !checkDev.phoneNumber) {
+        if (!checkDev || !checkDev.phoneNumber || checkDev.status === 'CONNECTED') {
           this.reconnectingDevices.delete(deviceId);
           return;
         }
@@ -762,6 +816,14 @@ class WhatsAppManager {
           if (connected && phone) {
             console.log(`[Auto-Reconnect] Device ${deviceId} recovered naturally! Phone: ${phone}`);
             await this.handleConnectionSuccess(deviceId, sessionName, phone);
+            return;
+          }
+
+          // If browser page is still responsive, don't destroy it yet; allow WhatsApp Web to finish socket handshake
+          const page = (client as any).page;
+          if (page && !page.isClosed()) {
+            console.log(`[Auto-Reconnect] Browser page for ${deviceId} is still active, waiting for socket handshake.`);
+            this.reconnectingDevices.delete(deviceId);
             return;
           }
 
@@ -802,8 +864,10 @@ class WhatsAppManager {
         } else {
           console.log(`[onStateChange] Device ${deviceId} (${sessionName}) is awaiting initial QR scan / pairing (State: UNPAIRED). Preserving session.`);
         }
-      } else if (state === 'DISCONNECTED' || state === 'TIMEOUT' || state === 'UNLAUNCHED') {
-        await this.handleTemporaryDisconnect(deviceId, sessionName, state);
+      } else if (state === 'DISCONNECTED' || state === 'TIMEOUT') {
+        if (this.authenticatedSessions.has(deviceId)) {
+          await this.handleTemporaryDisconnect(deviceId, sessionName, state);
+        }
       }
     });
 
