@@ -594,3 +594,15 @@ export const clearGroupTasks = async (req: Request, res: Response) => {
   groupJoinTasks.length = 0;
   res.json({ success: true, message: 'Riwayat antrean grup berhasil dibersihkan.' });
 };
+
+// 9. Agent In-App OTA Update Check
+export const checkAgentUpdate = async (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    latestVersionCode: 13,
+    latestVersionName: '1.7.3',
+    downloadUrl: 'https://github.com/lklock17/wagtw/releases/download/android-agent-latest/app-debug.apk',
+    releaseNotes: '• Fitur In-App Auto Update (Pembaruan Otomatis langsung di aplikasi)\n• Izin Pasang Pembaruan (Install Unknown Apps) sekali sentuh\n• Pengelompokan akun per HP fisik\n• Auto-konfirmasi dialog WhatsApp\n• Perbaikan deteksi paket WA Business & Personal',
+    minSupportedVersionCode: 10
+  });
+};

@@ -10,11 +10,13 @@ import android.provider.Settings
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ProgressBar
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -23,7 +25,9 @@ import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.android.material.tabs.TabLayout
 import com.wagtw.agent.service.AgentForegroundService
 import com.wagtw.agent.service.WhatsAppAccessibilityService
+import com.wagtw.agent.util.AppUpdateManager
 import com.wagtw.agent.util.PrefsManager
+import com.wagtw.agent.util.UpdateInfo
 
 class MainActivity : AppCompatActivity() {
 
@@ -45,6 +49,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnClearLogs: MaterialButton
     private lateinit var tvLogs: TextView
     private lateinit var scrollLogs: ScrollView
+
+    // Update Banner on Tab 1
+    private lateinit var cardUpdateBanner: View
+    private lateinit var tvUpdateBannerTitle: TextView
+    private lateinit var tvUpdateBannerDesc: TextView
+    private lateinit var btnBannerUpdate: MaterialButton
 
     // Accounts Views
     private lateinit var cbEnableBusiness: SwitchMaterial
@@ -69,11 +79,21 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnPermissionNotif: MaterialButton
     private lateinit var btnPermissionAccessibility: MaterialButton
     private lateinit var btnPermissionBattery: MaterialButton
+    private lateinit var btnPermissionInstall: MaterialButton
     private lateinit var rgTestWhatsAppType: RadioGroup
     private lateinit var rbTestBusiness: RadioButton
     private lateinit var rbTestPersonal: RadioButton
     private lateinit var etTestPhone: EditText
     private lateinit var btnQuickTestSend: MaterialButton
+
+    // OTA Update Views
+    private lateinit var tvCurrentVersionBadge: TextView
+    private lateinit var tvUpdateStatusText: TextView
+    private lateinit var layoutUpdateProgress: View
+    private lateinit var progressBarUpdate: ProgressBar
+    private lateinit var tvUpdatePercent: TextView
+    private lateinit var btnCheckUpdate: MaterialButton
+    private var currentUpdateInfo: UpdateInfo? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,12 +106,23 @@ class MainActivity : AppCompatActivity() {
         loadSavedConfig()
         checkPermissions()
         setupListeners()
+
+        // Check for updates silently on startup
+        checkForUpdates(silent = true)
     }
 
     override fun onResume() {
         super.onResume()
         checkPermissions()
         updateBadges()
+
+        // Resume pending APK installation if permission was granted
+        AppUpdateManager.pendingInstallApk?.let { apk ->
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()) {
+                AppUpdateManager.pendingInstallApk = null
+                AppUpdateManager.installApk(this, apk)
+            }
+        }
     }
 
     private fun initViews() {
@@ -110,6 +141,12 @@ class MainActivity : AppCompatActivity() {
         btnClearLogs = findViewById(R.id.btnClearLogs)
         tvLogs = findViewById(R.id.tvLogs)
         scrollLogs = findViewById(R.id.scrollLogs)
+
+        // Update Banner (Tab 1)
+        cardUpdateBanner = findViewById(R.id.cardUpdateBanner)
+        tvUpdateBannerTitle = findViewById(R.id.tvUpdateBannerTitle)
+        tvUpdateBannerDesc = findViewById(R.id.tvUpdateBannerDesc)
+        btnBannerUpdate = findViewById(R.id.btnBannerUpdate)
 
         // Accounts Tab
         cbEnableBusiness = findViewById(R.id.cbEnableBusiness)
@@ -134,11 +171,23 @@ class MainActivity : AppCompatActivity() {
         btnPermissionNotif = findViewById(R.id.btnPermissionNotif)
         btnPermissionAccessibility = findViewById(R.id.btnPermissionAccessibility)
         btnPermissionBattery = findViewById(R.id.btnPermissionBattery)
+        btnPermissionInstall = findViewById(R.id.btnPermissionInstall)
         rgTestWhatsAppType = findViewById(R.id.rgTestWhatsAppType)
         rbTestBusiness = findViewById(R.id.rbTestBusiness)
         rbTestPersonal = findViewById(R.id.rbTestPersonal)
         etTestPhone = findViewById(R.id.etTestPhone)
         btnQuickTestSend = findViewById(R.id.btnQuickTestSend)
+
+        // OTA Update Card
+        tvCurrentVersionBadge = findViewById(R.id.tvCurrentVersionBadge)
+        tvUpdateStatusText = findViewById(R.id.tvUpdateStatusText)
+        layoutUpdateProgress = findViewById(R.id.layoutUpdateProgress)
+        progressBarUpdate = findViewById(R.id.progressBarUpdate)
+        tvUpdatePercent = findViewById(R.id.tvUpdatePercent)
+        btnCheckUpdate = findViewById(R.id.btnCheckUpdate)
+
+        val verName = AppUpdateManager.getCurrentVersionName(this)
+        tvCurrentVersionBadge.text = "v$verName"
     }
 
     private fun setupTabs() {
@@ -193,10 +242,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateBadges() {
-        tvDeviceHeaderName.text = prefs.deviceName
-
-        val isBusinessInstalled = AgentForegroundService.isPackageInstalled(this, "com.whatsapp.w4b")
-        val businessCount = if (isBusinessInstalled) (if (prefs.isBusinessEnabled) 1 else 0) + (if (prefs.isBusiness2Enabled) 1 else 0) else 0
+        val businessCount = (if (prefs.isBusinessEnabled) 1 else 0) + (if (prefs.isBusiness2Enabled) 1 else 0)
         badgeBusinessStatus.text = if (businessCount > 0) "💼 Bisnis: $businessCount Akun" else "💼 Bisnis: OFF"
         badgeBusinessStatus.setTextColor(
             ContextCompat.getColor(this, if (businessCount > 0) R.color.primary else R.color.text_muted)
@@ -293,6 +339,25 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        btnPermissionInstall.setOnClickListener {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+            } else {
+                Toast.makeText(this, "Izin instalasi sudah diaktifkan oleh sistem Android.", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        btnCheckUpdate.setOnClickListener {
+            checkForUpdates(silent = false)
+        }
+
+        btnBannerUpdate.setOnClickListener {
+            currentUpdateInfo?.let { promptUpdateDialog(it) } ?: checkForUpdates(silent = false)
+        }
+
         btnToggleConnect.setOnClickListener {
             saveAccountSettings()
             saveServerSettings()
@@ -337,24 +402,22 @@ class MainActivity : AppCompatActivity() {
         stopService(intent)
         prefs.isServiceRunning = false
         updateStatus(false)
-        Toast.makeText(this, "🛑 Layanan Agen Dimatikan.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "⏹️ Layanan WAGTW Agent Dinonaktifkan.", Toast.LENGTH_SHORT).show()
     }
 
     private fun updateStatus(isOnline: Boolean) {
         if (isOnline) {
             tvStatusBadge.text = "ONLINE"
-            tvStatusBadge.setBackgroundResource(R.drawable.bg_badge_green)
             tvStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_green))
-
-            btnToggleConnect.text = "Hentikan Layanan Agen"
-            btnToggleConnect.backgroundTintList = ContextCompat.getColorStateList(this, R.color.status_red)
+            tvStatusBadge.setBackgroundResource(R.drawable.bg_badge)
+            btnToggleConnect.text = "Putuskan Koneksi"
+            btnToggleConnect.setBackgroundColor(ContextCompat.getColor(this, R.color.status_red))
         } else {
             tvStatusBadge.text = "OFFLINE"
-            tvStatusBadge.setBackgroundResource(R.drawable.bg_badge)
             tvStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_red))
-
-            btnToggleConnect.text = "Mulai Layanan Agen"
-            btnToggleConnect.backgroundTintList = ContextCompat.getColorStateList(this, R.color.primary)
+            tvStatusBadge.setBackgroundResource(R.drawable.bg_badge)
+            btnToggleConnect.text = "Simpan & Hubungkan"
+            btnToggleConnect.setBackgroundColor(ContextCompat.getColor(this, R.color.primary))
         }
     }
 
@@ -397,11 +460,123 @@ class MainActivity : AppCompatActivity() {
                 btnPermissionBattery.setTextColor(ContextCompat.getColor(this, R.color.status_orange))
             }
         }
+
+        // 4. Install Unknown Apps Permission
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val canInstall = packageManager.canRequestPackageInstalls()
+            if (canInstall) {
+                btnPermissionInstall.text = "Aktif ✓"
+                btnPermissionInstall.isEnabled = false
+                btnPermissionInstall.setTextColor(ContextCompat.getColor(this, R.color.status_green))
+            } else {
+                btnPermissionInstall.text = "Beri Izin"
+                btnPermissionInstall.isEnabled = true
+                btnPermissionInstall.setTextColor(ContextCompat.getColor(this, R.color.status_orange))
+            }
+        } else {
+            btnPermissionInstall.text = "Aktif ✓"
+            btnPermissionInstall.isEnabled = false
+            btnPermissionInstall.setTextColor(ContextCompat.getColor(this, R.color.status_green))
+        }
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
         val expectedComponentName = "${packageName}/${WhatsAppAccessibilityService::class.java.canonicalName}"
         val enabledServices = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
         return enabledServices.contains(expectedComponentName)
+    }
+
+    // ================= OTA AUTO-UPDATE LOGIC =================
+
+    private fun checkForUpdates(silent: Boolean = false) {
+        if (!silent) {
+            btnCheckUpdate.isEnabled = false
+            btnCheckUpdate.text = "⏳ Memeriksa..."
+            tvUpdateStatusText.text = "Sedang memeriksa pembaruan ke server..."
+        }
+
+        AppUpdateManager.checkUpdate(this) { info, error ->
+            runOnUiThread {
+                btnCheckUpdate.isEnabled = true
+                btnCheckUpdate.text = "🔄 Cek & Pasang Pembaruan"
+
+                if (info != null) {
+                    currentUpdateInfo = info
+                    if (info.hasUpdate) {
+                        cardUpdateBanner.visibility = View.VISIBLE
+                        tvUpdateBannerTitle.text = "Versi Baru Tersedia (${info.latestVersionName})"
+                        tvUpdateBannerDesc.text = "Tekan untuk memperbarui otomatis sekarang"
+                        tvUpdateStatusText.text = "🎉 Versi baru ${info.latestVersionName} tersedia!"
+
+                        if (!silent) {
+                            promptUpdateDialog(info)
+                        }
+                    } else {
+                        cardUpdateBanner.visibility = View.GONE
+                        tvUpdateStatusText.text = "✅ Aplikasi sudah dalam versi terbaru (${info.latestVersionName})."
+                        if (!silent) {
+                            Toast.makeText(this, "Aplikasi sudah dalam versi terbaru!", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } else {
+                    if (!silent) {
+                        tvUpdateStatusText.text = "⚠️ Gagal cek update: $error"
+                        Toast.makeText(this, "Gagal memeriksa pembaruan: $error", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun promptUpdateDialog(info: UpdateInfo) {
+        val message = "Versi Terbaru: ${info.latestVersionName}\n\nCatatan Rilis:\n${info.releaseNotes}\n\nApakah Anda ingin mengunduh dan memasang pembaruan sekarang?"
+        AlertDialog.Builder(this)
+            .setTitle("🚀 Pembaruan Aplikasi Tersedia")
+            .setMessage(message)
+            .setPositiveButton("Perbarui Sekarang") { _, _ ->
+                startDownload(info)
+            }
+            .setNegativeButton("Nanti", null)
+            .show()
+    }
+
+    private fun startDownload(info: UpdateInfo) {
+        layoutUpdateProgress.visibility = View.VISIBLE
+        progressBarUpdate.progress = 0
+        tvUpdatePercent.text = "0%"
+        btnCheckUpdate.isEnabled = false
+        btnCheckUpdate.text = "Mengunduh..."
+        tvUpdateStatusText.text = "Mengunduh file pembaruan ${info.latestVersionName}..."
+
+        AppUpdateManager.downloadApk(
+            context = this,
+            downloadUrl = info.downloadUrl,
+            onProgress = { progress ->
+                runOnUiThread {
+                    progressBarUpdate.progress = progress
+                    tvUpdatePercent.text = "$progress%"
+                }
+            },
+            onComplete = { apkFile ->
+                runOnUiThread {
+                    layoutUpdateProgress.visibility = View.GONE
+                    btnCheckUpdate.isEnabled = true
+                    btnCheckUpdate.text = "🔄 Cek & Pasang Pembaruan"
+                    tvUpdateStatusText.text = "✅ Unduhan selesai! Membuka pemasang paket..."
+
+                    // Launch installer
+                    AppUpdateManager.installApk(this, apkFile)
+                }
+            },
+            onError = { errMsg ->
+                runOnUiThread {
+                    layoutUpdateProgress.visibility = View.GONE
+                    btnCheckUpdate.isEnabled = true
+                    btnCheckUpdate.text = "🔄 Cek & Pasang Pembaruan"
+                    tvUpdateStatusText.text = "❌ Gagal mengunduh: $errMsg"
+                    Toast.makeText(this, "Gagal mengunduh pembaruan: $errMsg", Toast.LENGTH_LONG).show()
+                }
+            }
+        )
     }
 }
