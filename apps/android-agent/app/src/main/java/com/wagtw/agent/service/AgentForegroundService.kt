@@ -100,9 +100,11 @@ class AgentForegroundService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isLoopRunning = false
+        WhatsAppAccessibilityService.cancelWatchdog()
         sendDisconnect()
         appendLog("🛑 Layanan agen dimatikan")
         onStatusChanged?.invoke(false)
+        instance = null
     }
 
     private fun sendDisconnect() {
@@ -345,15 +347,6 @@ class AgentForegroundService : Service() {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        isLoopRunning = false
-        WhatsAppAccessibilityService.cancelWatchdog()
-        onStatusChanged?.invoke(false)
-        appendLog("🛑 Layanan dimatikan")
-        instance = null
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
