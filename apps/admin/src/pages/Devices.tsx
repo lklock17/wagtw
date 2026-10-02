@@ -244,11 +244,16 @@ export default function Devices() {
         to: formattedTo,
         text: testMessage
       });
-      setTestSentStatus('Pesan berhasil terkirim!');
+      const isAgent = testModalDevice.sessionData?.includes('ANDROID_AGENT');
+      if (isAgent) {
+        setTestSentStatus('⏳ Pesan diantrekan ke HP Android (Menunggu proses kirim oleh WhatsApp ponsel)...');
+      } else {
+        setTestSentStatus('✅ Pesan berhasil terkirim!');
+      }
       setTimeout(() => {
         setTestModalDevice(null);
         setTestSentStatus(null);
-      }, 1500);
+      }, 2500);
     } catch (err: any) {
       setTestSentStatus(`Gagal kirim: ${err.response?.data?.error || err.message}`);
     } finally {

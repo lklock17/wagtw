@@ -27,6 +27,30 @@ export interface GroupJoinTask {
 const pendingAgentMessages = new Map<string, Array<AgentQueueItem>>();
 const groupJoinTasks: GroupJoinTask[] = [];
 
+export interface AgentMessageResult {
+  status: 'SENT' | 'FAILED';
+  error?: string;
+}
+
+const agentMessageResolvers = new Map<string, {
+  resolve: (result: AgentMessageResult) => void;
+  timer: NodeJS.Timeout;
+}>();
+
+export const waitForAgentMessage = (messageId: string, timeoutMs = 12000): Promise<AgentMessageResult> => {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      agentMessageResolvers.delete(messageId);
+      resolve({
+        status: 'FAILED',
+        error: 'Timeout: HP Android Agent tidak merespons dalam batas waktu'
+      });
+    }, timeoutMs);
+
+    agentMessageResolvers.set(messageId, { resolve, timer });
+  });
+};
+
 export const getGroupJoinTasks = () => groupJoinTasks;
 
 export const enqueueAgentMessage = (deviceId: string, id: string, to: string, text: string) => {
@@ -339,6 +363,17 @@ export const updateMessageStatus = async (req: Request, res: Response) => {
     gTask.updatedAt = new Date();
   }
 
+  // Resolve any synchronous HTTP request waiting for this message
+  if (messageId && agentMessageResolvers.has(messageId)) {
+    const waiter = agentMessageResolvers.get(messageId)!;
+    clearTimeout(waiter.timer);
+    agentMessageResolvers.delete(messageId);
+    waiter.resolve({
+      status: (status === 'SENT' || status === 'JOINED' || status === 'SUCCESS') ? 'SENT' : 'FAILED',
+      error: error || undefined
+    });
+  }
+
   if (messageId) {
     try {
       const finalStatus = (status === 'SENT' || status === 'JOINED' || status === 'SUCCESS') ? 'SENT' : 'FAILED';
@@ -354,6 +389,32 @@ export const updateMessageStatus = async (req: Request, res: Response) => {
           error: error || null
         }
       });
+
+      // Sync with Bulk Campaign message if applicable
+      const bulkMsg = await prisma.bulkMessage.findUnique({
+        where: { id: messageId }
+      });
+      if (bulkMsg) {
+        await prisma.bulkMessage.update({
+          where: { id: messageId },
+          data: {
+            status: finalStatus,
+            sentAt: finalStatus === 'SENT' ? new Date() : null,
+            error: error || null
+          }
+        });
+        if (finalStatus === 'SENT') {
+          await prisma.bulkJob.update({
+            where: { id: bulkMsg.jobId },
+            data: { sent: { increment: 1 } }
+          });
+        } else {
+          await prisma.bulkJob.update({
+            where: { id: bulkMsg.jobId },
+            data: { failed: { increment: 1 } }
+          });
+        }
+      }
 
       // Handle Device Suspended, Auto-Failover, & Circuit Breaker (Auto-Stop)
       if (finalStatus === 'FAILED' && existingLog) {

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '@wagtw/database';
 import axios from 'axios';
-import { enqueueAgentMessage } from './agent.controller';
+import { enqueueAgentMessage, waitForAgentMessage } from './agent.controller';
 
 const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4011';
 let rotationIndex = 0;
@@ -117,10 +117,9 @@ export const sendMessage = async (req: Request, res: Response) => {
         if (device.sessionData) sessionInfo = JSON.parse(device.sessionData);
       } catch (e) {}
 
-      // Handle Android Agent physical phone relay
+      // Handle Android Agent physical phone relay (Synchronous Await)
       if (sessionInfo?.type === 'ANDROID_AGENT') {
         const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-        enqueueAgentMessage(device.id, msgId, recipient, content || caption || '');
 
         await prisma.messageLog.create({
           data: {
@@ -134,23 +133,59 @@ export const sendMessage = async (req: Request, res: Response) => {
           }
         });
 
-        return res.json({
-          success: true,
-          message: 'Pesan berhasil diantrekan ke HP Android Agent!',
-          data: {
-            messageId: msgId,
-            recipient,
-            sentVia: {
-              deviceId: device.id,
-              deviceName: device.name,
-              phoneNumber: device.phoneNumber,
-              type: 'ANDROID_AGENT'
-            },
-            autoRotated: isRotationRequested,
-            failoverTriggered: attempts > 1,
-            attemptCount: attempts
+        enqueueAgentMessage(device.id, msgId, recipient, content || caption || '');
+
+        // Wait for the physical phone agent to execute and report real result (up to 12s)
+        const agentResult = await waitForAgentMessage(msgId, 12000);
+
+        if (agentResult.status === 'SENT') {
+          return res.json({
+            success: true,
+            status: 'SENT',
+            message: 'Pesan berhasil terkirim dari WhatsApp ponsel!',
+            data: {
+              messageId: msgId,
+              recipient,
+              status: 'SENT',
+              sentVia: {
+                deviceId: device.id,
+                deviceName: device.name,
+                phoneNumber: device.phoneNumber,
+                type: 'ANDROID_AGENT'
+              },
+              autoRotated: isRotationRequested,
+              failoverTriggered: attempts > 1,
+              attemptCount: attempts
+            }
+          });
+        } else {
+          lastError = agentResult.error || 'Pesan gagal dikirim oleh WhatsApp ponsel';
+          console.warn(`[Failover] Agent device ${device.name} failed: ${lastError}.`);
+
+          // If failover is enabled and there are other candidate devices, try next device
+          if (failover && attempts < candidateQueue.length) {
+            continue;
           }
-        });
+
+          return res.status(400).json({
+            success: false,
+            status: 'FAILED',
+            error: lastError,
+            data: {
+              messageId: msgId,
+              recipient,
+              status: 'FAILED',
+              sentVia: {
+                deviceId: device.id,
+                deviceName: device.name,
+                phoneNumber: device.phoneNumber,
+                type: 'ANDROID_AGENT'
+              },
+              failoverTriggered: attempts > 1,
+              attemptCount: attempts
+            }
+          });
+        }
       }
 
       const response = await axios.post(`${WORKER_URL}/messages/send`, {

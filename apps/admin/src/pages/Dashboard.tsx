@@ -66,20 +66,25 @@ export default function Dashboard() {
     setQuickSending(true);
     setQuickAlert(null);
     try {
-      await messageService.sendMessage({
+      const res = await messageService.sendMessage({
         to: quickTo,
         text: quickMsg,
         deviceId: 'rotate', // Use Auto-Rotate by default
         failover: true
       });
-      setQuickAlert('Pesan berhasil dikirim via Auto-Rotate!');
+      const sentVia = res.data?.data?.sentVia;
+      if (sentVia?.type === 'ANDROID_AGENT') {
+        setQuickAlert(`⏳ Pesan diantrekan ke HP Android (${sentVia.deviceName}). Menunggu kirim di ponsel...`);
+      } else {
+        setQuickAlert('✅ Pesan berhasil dikirim!');
+      }
       setQuickTo('');
       setQuickMsg('');
       setTimeout(() => {
         setQuickAlert(null);
         setShowQuickSend(false);
         loadDashboard();
-      }, 1500);
+      }, 2500);
     } catch (err: any) {
       setQuickAlert('Gagal mengirim: ' + (err.response?.data?.error || err.message));
     } finally {

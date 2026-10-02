@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '@wagtw/database';
 import axios from 'axios';
 import { normalizePhoneNumber } from '../utils/phone';
+import { enqueueAgentMessage } from './agent.controller';
 
 const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4011';
 
@@ -91,22 +92,32 @@ async function processBulkJob(jobId: string) {
     }
 
     try {
-      // Send to worker
-      await axios.post(`${WORKER_URL}/messages/send`, {
-        deviceId: job.deviceId,
-        to: msg.to,
-        text: msg.body
-      });
+      if (currentDevice?.sessionData?.includes('ANDROID_AGENT')) {
+        // Queue to Android Agent phone relay - Do NOT mark SENT yet!
+        enqueueAgentMessage(job.deviceId, msg.id, msg.to, msg.body);
+        // Leave status as PENDING until phone reports back via updateMessageStatus
+        await prisma.bulkMessage.update({
+          where: { id: msg.id },
+          data: { status: 'PENDING' }
+        });
+      } else {
+        // Send via worker (Puppeteer Web Session)
+        await axios.post(`${WORKER_URL}/messages/send`, {
+          deviceId: job.deviceId,
+          to: msg.to,
+          text: msg.body
+        });
 
-      await prisma.bulkMessage.update({
-        where: { id: msg.id },
-        data: { status: 'SENT', sentAt: new Date() }
-      });
+        await prisma.bulkMessage.update({
+          where: { id: msg.id },
+          data: { status: 'SENT', sentAt: new Date() }
+        });
 
-      await prisma.bulkJob.update({
-        where: { id: jobId },
-        data: { sent: { increment: 1 } }
-      });
+        await prisma.bulkJob.update({
+          where: { id: jobId },
+          data: { sent: { increment: 1 } }
+        });
+      }
 
     } catch (error: any) {
       await prisma.bulkMessage.update({
