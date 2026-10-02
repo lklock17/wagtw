@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import okhttp3.OkHttpClient
@@ -168,7 +169,8 @@ object AppUpdateManager {
                     return@Thread
                 }
 
-                val updateDir = File(context.cacheDir, "updates")
+                val updateDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                    ?: File(context.cacheDir, "updates").apply { if (!exists()) mkdirs() }
                 if (!updateDir.exists()) updateDir.mkdirs()
 
                 val apkFile = File(updateDir, "wagtw-agent-update.apk")
@@ -199,6 +201,7 @@ object AppUpdateManager {
                 outputStream.close()
                 inputStream.close()
 
+                apkFile.setReadable(true, false)
                 pendingInstallApk = apkFile
                 onComplete(apkFile)
             } catch (e: Exception) {
@@ -209,9 +212,15 @@ object AppUpdateManager {
 
     fun installApk(activity: Activity, apkFile: File) {
         try {
+            if (!apkFile.exists() || apkFile.length() == 0L) {
+                android.widget.Toast.makeText(activity, "File APK tidak ditemukan atau rusak. Silakan unduh ulang.", android.widget.Toast.LENGTH_LONG).show()
+                return
+            }
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 if (!activity.packageManager.canRequestPackageInstalls()) {
                     pendingInstallApk = apkFile
+                    android.widget.Toast.makeText(activity, "Mohon aktifkan 'Izinkan dari sumber ini' untuk memasang pembaruan.", android.widget.Toast.LENGTH_LONG).show()
                     val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
                         data = Uri.parse("package:${activity.packageName}")
                     }
@@ -219,6 +228,8 @@ object AppUpdateManager {
                     return
                 }
             }
+
+            apkFile.setReadable(true, false)
 
             val apkUri: Uri = FileProvider.getUriForFile(
                 activity,
@@ -229,12 +240,21 @@ object AppUpdateManager {
             val installIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(apkUri, "application/vnd.android.package-archive")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+
+            val resolveInfoList = activity.packageManager.queryIntentActivities(installIntent, PackageManager.MATCH_DEFAULT_ONLY)
+            for (resolveInfo in resolveInfoList) {
+                val pkgName = resolveInfo.activityInfo.packageName
+                activity.grantUriPermission(pkgName, apkUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
             activity.startActivity(installIntent)
         } catch (e: Exception) {
             e.printStackTrace()
+            android.widget.Toast.makeText(activity, "Gagal membuka installer: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
         }
     }
 }

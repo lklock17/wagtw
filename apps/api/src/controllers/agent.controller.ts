@@ -589,10 +589,10 @@ export const clearGroupTasks = async (req: Request, res: Response) => {
 export const checkAgentUpdate = async (req: Request, res: Response) => {
   res.json({
     success: true,
-    latestVersionCode: 14,
-    latestVersionName: '1.7.4',
+    latestVersionCode: 15,
+    latestVersionName: '1.7.5',
     downloadUrl: 'https://github.com/lklock17/wagtw/releases/download/android-agent-latest/app-debug.apk',
-    releaseNotes: '• Komunikasi Realtime WebSocket (Pengiriman instan 0ms dari Web ke HP)\n• Nonaktifkan pergantian nomor otomatis (No auto-failover diam-diam)\n• Deteksi instan akun logout/belum login\n• In-App OTA Auto-Updater & Izin Pasang Sekali Sentuh',
+    releaseNotes: '• Fixed Keystore Signature (Mencegah konflik tanda tangan saat update)\n• Kompatibilitas installer Android 10-14 & HyperOS/MIUI/OneUI\n• WebSocket Realtime 0ms Instan',
     minSupportedVersionCode: 10
   });
 };
