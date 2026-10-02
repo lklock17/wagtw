@@ -26,13 +26,16 @@ import java.util.concurrent.TimeUnit
 class AgentForegroundService : Service() {
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.SECONDS)
+        .pingInterval(15, TimeUnit.SECONDS)
         .build()
 
     private var isLoopRunning = false
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var prefs: PrefsManager
+    private var agentWebSocket: okhttp3.WebSocket? = null
+    private val recentlyHandledMsgIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     companion object {
         const val CHANNEL_ID = "wagtw_agent_channel"
@@ -221,6 +224,7 @@ class AgentForegroundService : Service() {
         // Register device with server first
         Thread {
             registerDevice()
+            connectWebSocket()
             pollLoop()
         }.start()
     }
@@ -312,6 +316,12 @@ class AgentForegroundService : Service() {
                                 for (i in 0 until messages.length()) {
                                     val msg = messages.getJSONObject(i)
                                     val msgId = msg.getString("id")
+                                    if (recentlyHandledMsgIds.contains(msgId)) continue
+                                    recentlyHandledMsgIds.add(msgId)
+                                    if (recentlyHandledMsgIds.size > 500) {
+                                        recentlyHandledMsgIds.clear()
+                                    }
+
                                     val type = msg.optString("type", "MESSAGE")
                                     val msgDeviceId = msg.optString("deviceId", "")
                                     
@@ -354,11 +364,104 @@ class AgentForegroundService : Service() {
             }
 
             try {
-                Thread.sleep(4000)
+                Thread.sleep(8000)
             } catch (e: InterruptedException) {
                 break
             }
         }
+    }
+
+    private fun connectWebSocket() {
+        if (!isLoopRunning) return
+        val serverUrl = prefs.serverUrl.trimEnd('/')
+        val wsScheme = if (serverUrl.startsWith("https://", true)) "wss://" else "ws://"
+        val hostPort = serverUrl.replace(Regex("^https?://", RegexOption.IGNORE_CASE), "")
+        val wsUrl = "$wsScheme$hostPort/api/agent/ws?phoneId=${prefs.phoneId}"
+
+        appendLog("🔌 Menghubungkan Realtime Socket...")
+
+        val req = Request.Builder().url(wsUrl).build()
+        agentWebSocket = httpClient.newWebSocket(req, object : okhttp3.WebSocketListener() {
+            override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
+                appendLog("⚡ Realtime Socket Terhubung! (Mode Instan Aktif)")
+                val devIds = JSONArray().apply {
+                    if (prefs.businessDeviceId.isNotEmpty()) put(prefs.businessDeviceId)
+                    if (prefs.businessDeviceId2.isNotEmpty()) put(prefs.businessDeviceId2)
+                    if (prefs.personalDeviceId.isNotEmpty()) put(prefs.personalDeviceId)
+                    if (prefs.personalDeviceId2.isNotEmpty()) put(prefs.personalDeviceId2)
+                    if (prefs.deviceId.isNotEmpty()) put(prefs.deviceId)
+                }
+                val reg = JSONObject().apply {
+                    put("type", "REGISTER")
+                    put("phoneId", prefs.phoneId)
+                    put("deviceIds", devIds)
+                }
+                webSocket.send(reg.toString())
+            }
+
+            override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
+                try {
+                    val msg = JSONObject(text)
+                    val type = msg.optString("type")
+                    if (type == "DISPATCH_MESSAGE") {
+                        val msgId = msg.getString("id")
+                        if (recentlyHandledMsgIds.contains(msgId)) return
+                        recentlyHandledMsgIds.add(msgId)
+                        if (recentlyHandledMsgIds.size > 500) {
+                            recentlyHandledMsgIds.clear()
+                        }
+
+                        val to = msg.getString("to")
+                        val msgText = msg.getString("text")
+                        val msgDeviceId = msg.optString("deviceId", "")
+                        
+                        val serverTargetPkg = msg.optString("targetPackage", "")
+                        val computedPkg = when (msgDeviceId) {
+                            prefs.businessDeviceId2, prefs.businessDeviceId -> "com.whatsapp.w4b"
+                            prefs.personalDeviceId2, prefs.personalDeviceId -> "com.whatsapp"
+                            else -> if (prefs.isPersonalEnabled && !prefs.isBusinessEnabled) "com.whatsapp" else if (prefs.isBusinessEnabled) "com.whatsapp.w4b" else "com.whatsapp"
+                        }
+                        val rawPkg = if (serverTargetPkg.isNotEmpty()) serverTargetPkg else computedPkg
+                        val targetPkg = resolveSafeTargetPackage(applicationContext, rawPkg)
+                        val label = if (targetPkg == "com.whatsapp.w4b") "Business" else "Personal"
+
+                        val autoDualAppTarget = when (msgDeviceId) {
+                            prefs.businessDeviceId2, prefs.personalDeviceId2 -> "ACCOUNT_2"
+                            else -> "ACCOUNT_1"
+                        }
+                        val dualAppTarget = if (msg.has("dualAppTarget")) msg.getString("dualAppTarget") else autoDualAppTarget
+
+                        appendLog("⚡ [Realtime Instan] Mengirim ke $to ($label): $msgText")
+                        dispatchWhatsAppMessage(msgId, to, msgText, targetPkg, dualAppTarget)
+                    }
+                } catch (e: Exception) {
+                    Log.e("WAGTW_WS", "Error handling WS message: ${e.message}")
+                }
+            }
+
+            override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
+                Log.w("WAGTW_WS", "WebSocket disconnected: ${t.message}. Reconnecting in 5s...")
+                agentWebSocket = null
+                scheduleWsReconnect()
+            }
+
+            override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
+                agentWebSocket = null
+                scheduleWsReconnect()
+            }
+        })
+    }
+
+    private fun scheduleWsReconnect() {
+        if (!isLoopRunning) return
+        Thread {
+            try {
+                Thread.sleep(5000)
+                if (isLoopRunning && agentWebSocket == null) {
+                    connectWebSocket()
+                }
+            } catch (e: Exception) {}
+        }.start()
     }
 
     private fun dispatchWhatsAppMessage(messageId: String, to: String, text: String, targetPkg: String, dualAppTarget: String? = null) {
@@ -411,6 +514,24 @@ class AgentForegroundService : Service() {
     }
 
     fun reportMessageStatus(messageId: String, status: String, error: String? = null, deviceStatus: String? = null) {
+        // 1. Send via WebSocket if connected (instantaneous!)
+        try {
+            val ws = agentWebSocket
+            if (ws != null) {
+                val wsObj = JSONObject().apply {
+                    put("type", "MESSAGE_STATUS")
+                    put("messageId", messageId)
+                    put("status", status)
+                    if (error != null) put("error", error)
+                    if (deviceStatus != null) put("deviceStatus", deviceStatus)
+                }
+                ws.send(wsObj.toString())
+            }
+        } catch (e: Exception) {
+            Log.e("WAGTW_AGENT", "WS report error: ${e.message}")
+        }
+
+        // 2. Also send via HTTP POST as reliable guarantee
         Thread {
             try {
                 val serverUrl = prefs.serverUrl.trimEnd('/')
@@ -465,6 +586,17 @@ class AgentForegroundService : Service() {
             }
             manager.createNotificationChannel(alertChannel)
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        isLoopRunning = false
+        try {
+            agentWebSocket?.close(1000, "Service stopped")
+            agentWebSocket = null
+        } catch (e: Exception) {}
+        onStatusChanged?.invoke(false)
+        appendLog("⏹️ Layanan latar belakang dihentikan")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

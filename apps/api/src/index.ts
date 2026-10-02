@@ -1,4 +1,5 @@
 import express from 'express';
+import http from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
@@ -11,6 +12,7 @@ import { prisma } from '@wagtw/database';
 import routes from './routes';
 import { warmupService } from './services/warmup.service';
 import { normalizePhoneNumber } from './utils/phone';
+import { setupAgentWebSocket } from './services/agent-ws.service';
 
 dotenv.config();
 
@@ -100,6 +102,9 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 API Server ready at http://localhost:${PORT}`);
+const server = http.createServer(app);
+setupAgentWebSocket(server);
+
+server.listen(PORT, () => {
+  console.log(`🚀 API Server + Agent WebSocket ready at http://localhost:${PORT}`);
 });

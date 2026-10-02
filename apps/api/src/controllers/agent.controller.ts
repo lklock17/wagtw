@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma } from '@wagtw/database';
 import axios from 'axios';
+import { sendInstantMessageToAgent, setAgentWsStatusHandler } from '../services/agent-ws.service';
 
 const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4011';
 
@@ -55,10 +56,34 @@ export const waitForAgentMessage = (messageId: string, timeoutMs = 12000): Promi
 
 export const getGroupJoinTasks = () => groupJoinTasks;
 
-export const enqueueAgentMessage = (deviceId: string, id: string, to: string, text: string) => {
+export const enqueueAgentMessage = async (deviceId: string, id: string, to: string, text: string) => {
+  let targetPackage: string | undefined;
+  let dualAppTarget: string | undefined;
+
+  try {
+    const dev = await prisma.device.findUnique({ where: { id: deviceId } });
+    if (dev?.sessionData) {
+      const data = JSON.parse(dev.sessionData);
+      targetPackage = data.targetPackage;
+      dualAppTarget = data.dualAppTarget;
+    }
+  } catch (e) {}
+
+  const payload: AgentQueueItem = {
+    id,
+    type: 'MESSAGE',
+    to,
+    text,
+    targetPackage,
+    dualAppTarget
+  };
+
   const list = pendingAgentMessages.get(deviceId) || [];
-  list.push({ id, type: 'MESSAGE', to, text });
+  list.push(payload);
   pendingAgentMessages.set(deviceId, list);
+
+  // Instantly send over real-time WebSocket if phone is connected!
+  sendInstantMessageToAgent(deviceId, payload);
 };
 
 export const enqueueAgentGroupJoin = (deviceId: string, id: string, inviteUrl: string, deviceName?: string) => {
@@ -366,9 +391,8 @@ export const getPendingMessages = async (req: Request, res: Response) => {
   res.json({ success: true, messages: allMessages });
 };
 
-// 4. Update message status
-export const updateMessageStatus = async (req: Request, res: Response) => {
-  const { messageId, status, error, deviceStatus } = req.body;
+// 4. Update message status logic (shared by HTTP and WebSocket)
+export const processMessageStatus = async (messageId: string, status: string, error?: string, deviceStatus?: string) => {
   console.log(`[Android Agent] Message/Task ${messageId} status: ${status} ${error ? `(${error})` : ''} ${deviceStatus ? `[Device: ${deviceStatus}]` : ''}`);
 
   // Check group join tasks
@@ -432,66 +456,25 @@ export const updateMessageStatus = async (req: Request, res: Response) => {
         }
       }
 
-      // Handle Device Suspended, Auto-Failover, & Circuit Breaker (Auto-Stop)
+      // Handle Device Suspended & Circuit Breaker (Auto-Stop for Bulk Jobs)
       if (finalStatus === 'FAILED' && existingLog) {
-        const isDeviceIssue = deviceStatus === 'SUSPENDED' || 
+        const isSuspended = deviceStatus === 'SUSPENDED' || 
           error?.includes('banned') || 
           error?.includes('ditangguhkan') || 
-          error?.includes('Timeout') || 
-          error?.includes('dibatasi') ||
-          error?.includes('TIMEOUT');
+          error?.includes('dibatasi');
 
-        const isInvalidNumber = error?.includes('tidak terdaftar') || error?.includes('tidak valid');
-
-        if (isDeviceIssue && !isInvalidNumber) {
-          // If suspended or banned, mark device as paused and disconnected
-          if (deviceStatus === 'SUSPENDED' || error?.includes('banned') || error?.includes('ditangguhkan')) {
-            console.warn(`[Android Agent] Device ${existingLog.deviceId} suspended by WhatsApp! Marking paused & disconnected.`);
-            await prisma.device.updateMany({
-              where: { id: existingLog.deviceId },
-              data: { isPaused: true, status: 'DISCONNECTED' }
-            });
-          }
-
-          // Auto Failover: Find alternative connected device
-          const availableDevices = await prisma.device.findMany({
-            where: {
-              status: 'CONNECTED',
-              isPaused: false,
-              id: { not: existingLog.deviceId }
-            }
+        if (isSuspended) {
+          console.warn(`[Android Agent] Device ${existingLog.deviceId} suspended/banned by WhatsApp! Marking paused & disconnected.`);
+          await prisma.device.updateMany({
+            where: { id: existingLog.deviceId },
+            data: { isPaused: true, status: 'DISCONNECTED' }
           });
 
-          if (availableDevices.length > 0) {
-            const nextDevice = availableDevices[0];
-            console.log(`[Failover] Re-dispatching message ${messageId} to available device: ${nextDevice.name} (${nextDevice.id})`);
-
-            const newMsgId = `retry_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-
-            if (nextDevice.sessionData?.includes('ANDROID_AGENT')) {
-              enqueueAgentMessage(nextDevice.id, newMsgId, existingLog.to, existingLog.body);
-            } else {
-              axios.post(`${WORKER_URL}/messages/send`, {
-                deviceId: nextDevice.id,
-                to: existingLog.to,
-                text: existingLog.body
-              }, { timeout: 30000 }).catch(e => console.error('[Failover Worker Error]:', e.message));
-            }
-
-            await prisma.messageLog.create({
-              data: {
-                id: newMsgId,
-                deviceId: nextDevice.id,
-                to: existingLog.to,
-                body: existingLog.body,
-                type: existingLog.type,
-                status: 'PENDING'
-              }
-            });
-          } else {
-            console.error(`[Circuit Breaker] All WhatsApp devices are OFFLINE / SUSPENDED! Auto-stopping broadcast queue.`);
-            await prisma.bulkJob.updateMany({
-              where: { status: 'PROCESSING' },
+          // If it was part of a bulk campaign, pause the broadcast so it doesn't keep failing
+          if (bulkMsg) {
+            console.error(`[Circuit Breaker] Bulk broadcast device suspended. Pausing job ${bulkMsg.jobId}.`);
+            await prisma.bulkJob.update({
+              where: { id: bulkMsg.jobId },
               data: { status: 'PAUSED' }
             });
           }
@@ -501,7 +484,14 @@ export const updateMessageStatus = async (req: Request, res: Response) => {
       console.error('Failed to update message status in DB:', e.message);
     }
   }
+};
 
+// Wire up WebSocket handler
+setAgentWsStatusHandler(processMessageStatus);
+
+export const updateMessageStatus = async (req: Request, res: Response) => {
+  const { messageId, status, error, deviceStatus } = req.body;
+  await processMessageStatus(messageId, status, error, deviceStatus);
   res.json({ success: true });
 };
 
@@ -599,10 +589,10 @@ export const clearGroupTasks = async (req: Request, res: Response) => {
 export const checkAgentUpdate = async (req: Request, res: Response) => {
   res.json({
     success: true,
-    latestVersionCode: 13,
-    latestVersionName: '1.7.3',
+    latestVersionCode: 14,
+    latestVersionName: '1.7.4',
     downloadUrl: 'https://github.com/lklock17/wagtw/releases/download/android-agent-latest/app-debug.apk',
-    releaseNotes: '• Fitur In-App Auto Update (Pembaruan Otomatis langsung di aplikasi)\n• Izin Pasang Pembaruan (Install Unknown Apps) sekali sentuh\n• Pengelompokan akun per HP fisik\n• Auto-konfirmasi dialog WhatsApp\n• Perbaikan deteksi paket WA Business & Personal',
+    releaseNotes: '• Komunikasi Realtime WebSocket (Pengiriman instan 0ms dari Web ke HP)\n• Nonaktifkan pergantian nomor otomatis (No auto-failover diam-diam)\n• Deteksi instan akun logout/belum login\n• In-App OTA Auto-Updater & Izin Pasang Sekali Sentuh',
     minSupportedVersionCode: 10
   });
 };
