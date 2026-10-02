@@ -174,6 +174,10 @@ class AgentForegroundService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isLoopRunning = false
+        try {
+            agentWebSocket?.close(1000, "Service stopped")
+            agentWebSocket = null
+        } catch (e: Exception) {}
         WhatsAppAccessibilityService.cancelWatchdog()
         sendDisconnect()
         appendLog("🛑 Layanan agen dimatikan")
@@ -586,17 +590,6 @@ class AgentForegroundService : Service() {
             }
             manager.createNotificationChannel(alertChannel)
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        isLoopRunning = false
-        try {
-            agentWebSocket?.close(1000, "Service stopped")
-            agentWebSocket = null
-        } catch (e: Exception) {}
-        onStatusChanged?.invoke(false)
-        appendLog("⏹️ Layanan latar belakang dihentikan")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
