@@ -32,79 +32,87 @@ class WhatsAppManager {
   private authenticatedSessions: Set<string> = new Set();
   private failedAutoRecovery: Set<string> = new Set();
 
-  async isSessionTrulyConnected(client: wppconnect.Whatsapp): Promise<{ connected: boolean; phone: string | null }> {
-    try {
-      // Check multiple auth indicators: isAuthenticated, isMainLoaded, isMainReady, or isLoggedIn
-      let isAuth = false;
+  async isSessionTrulyConnected(client: wppconnect.Whatsapp, timeoutMs = 4000): Promise<{ connected: boolean; phone: string | null }> {
+    const checkPromise = async (): Promise<{ connected: boolean; phone: string | null }> => {
       try {
-        if (typeof (client as any).isAuthenticated === 'function') {
-          isAuth = await (client as any).isAuthenticated();
-        }
-      } catch {}
-
-      if (!isAuth) {
+        // Check multiple auth indicators: isAuthenticated, isMainLoaded, isMainReady, or isLoggedIn
+        let isAuth = false;
         try {
-          if (typeof (client as any).isMainLoaded === 'function') {
-            isAuth = await (client as any).isMainLoaded();
+          if (typeof (client as any).isAuthenticated === 'function') {
+            isAuth = await (client as any).isAuthenticated();
           }
         } catch {}
-      }
 
-      if (!isAuth) {
-        try {
-          isAuth = await client.isLoggedIn();
-        } catch {
-          isAuth = false;
-        }
-      }
-
-      if (!isAuth) return { connected: false, phone: null };
-
-      let phone: string | null = null;
-      try {
-        const rawWid = await client.getWid();
-        if (rawWid) {
-          phone = rawWid.replace(/[^0-9]/g, '');
-        }
-      } catch {}
-
-      if (!phone) {
-        try {
-          const info = await client.getHostDevice();
-          const p = info?.wid?.user || (info as any)?.id?.user || (info as any)?.phoneNumber;
-          if (p) {
-            phone = String(p).replace(/[^0-9]/g, '');
-          }
-        } catch {}
-      }
-
-      if (!phone) {
-        try {
-          const page = (client as any).page;
-          if (page && !page.isClosed()) {
-            const domPhone = await page.evaluate(() => {
-              const lastWid = window.localStorage.getItem('last-wid');
-              if (lastWid) return lastWid;
-              const wpp = (window as any).WPP;
-              return wpp?.conn?.getMyUserId()?.user ||
-                     wpp?.conn?.getMyUserWid()?.user ||
-                     null;
-            });
-            if (domPhone) {
-              phone = String(domPhone).replace(/[^0-9]/g, '');
+        if (!isAuth) {
+          try {
+            if (typeof (client as any).isMainLoaded === 'function') {
+              isAuth = await (client as any).isMainLoaded();
             }
+          } catch {}
+        }
+
+        if (!isAuth) {
+          try {
+            isAuth = await client.isLoggedIn();
+          } catch {
+            isAuth = false;
+          }
+        }
+
+        if (!isAuth) return { connected: false, phone: null };
+
+        let phone: string | null = null;
+        try {
+          const rawWid = await client.getWid();
+          if (rawWid) {
+            phone = rawWid.replace(/[^0-9]/g, '');
           }
         } catch {}
-      }
 
-      if (!phone || phone.length < 5) {
+        if (!phone) {
+          try {
+            const info = await client.getHostDevice();
+            const p = info?.wid?.user || (info as any)?.id?.user || (info as any)?.phoneNumber;
+            if (p) {
+              phone = String(p).replace(/[^0-9]/g, '');
+            }
+          } catch {}
+        }
+
+        if (!phone) {
+          try {
+            const page = (client as any).page;
+            if (page && !page.isClosed()) {
+              const domPhone = await page.evaluate(() => {
+                const lastWid = window.localStorage.getItem('last-wid');
+                if (lastWid) return lastWid;
+                const wpp = (window as any).WPP;
+                return wpp?.conn?.getMyUserId()?.user ||
+                       wpp?.conn?.getMyUserWid()?.user ||
+                       null;
+              });
+              if (domPhone) {
+                phone = String(domPhone).replace(/[^0-9]/g, '');
+              }
+            }
+          } catch {}
+        }
+
+        if (!phone || phone.length < 5) {
+          return { connected: false, phone: null };
+        }
+
+        return { connected: true, phone };
+      } catch {
         return { connected: false, phone: null };
       }
+    };
 
-      return { connected: true, phone };
-    } catch {
-      return { connected: false, phone: null };
-    }
+    const timeoutPromise = new Promise<{ connected: boolean; phone: string | null }>((resolve) => {
+      setTimeout(() => resolve({ connected: false, phone: null }), timeoutMs);
+    });
+
+    return Promise.race([checkPromise(), timeoutPromise]);
   }
 
   private sessionQueue: Array<{ deviceId: string; sessionName: string; isAutoRecovery: boolean }> = [];
@@ -395,6 +403,7 @@ class WhatsAppManager {
         debug: false,
         logQR: false,
         puppeteerOptions: {
+          protocolTimeout: 30000,
           userDataDir: tokenDir,
           defaultViewport: {
             width: 1024,
@@ -1180,8 +1189,20 @@ class WhatsAppManager {
   async getClient(deviceId: string) {
     const client = this.sessions.get(deviceId);
     if (!client) return null;
-    const { connected } = await this.isSessionTrulyConnected(client);
+    const page = (client as any).page;
+    if (page && page.isClosed()) {
+      this.sessions.delete(deviceId);
+      this.authenticatedSessions.delete(deviceId);
+      return null;
+    }
+    // Fast path: if session is already recorded as authenticated, return immediately
+    if (this.authenticatedSessions.has(deviceId)) {
+      return client;
+    }
+    // Fast sanity check with 3s timeout
+    const { connected } = await this.isSessionTrulyConnected(client, 3000);
     if (!connected) return null;
+    this.authenticatedSessions.add(deviceId);
     return client;
   }
 

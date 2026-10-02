@@ -160,7 +160,7 @@ export const sendMessage = async (req: Request, res: Response) => {
         type,
         url,
         caption
-      }, { timeout: 15000 });
+      }, { timeout: 30000 });
 
       // Log success to database
       await prisma.messageLog.create({

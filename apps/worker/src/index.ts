@@ -70,44 +70,54 @@ app.post('/messages/send', async (req, res) => {
     return res.status(400).json({ error: 'deviceId and to are required' });
   }
 
+  const startTime = Date.now();
+  console.log(`[Worker /messages/send] Incoming dispatch request for device ${deviceId} to ${to}`);
+
   const client = await waManager.getClient(deviceId);
-  if (!client) return res.status(404).json({ error: 'Session not found for device' });
+  if (!client) {
+    console.warn(`[Worker /messages/send] Session not found or disconnected for device ${deviceId}`);
+    return res.status(404).json({ error: 'Session not found for device' });
+  }
 
   // Auto-detect and format phone number to proper WhatsApp JID
   const jid = formatToWhatsAppJid(to);
 
   try {
-    // Humanized typing simulation before sending message
+    // Non-blocking human typing simulation (lightweight jitter 400-800ms)
     try {
       if (typeof (client as any).startTyping === 'function') {
         const textLen = (text || caption || '').length;
-        // ~35ms per character, clamped between 1500ms and 4500ms + random human jitter
-        const calculatedDuration = Math.min(Math.max(textLen * 35, 1500), 4500);
-        const randomJitter = Math.floor(Math.random() * 800);
-        const typingDuration = calculatedDuration + randomJitter;
-
-        await (client as any).startTyping(jid, typingDuration);
-        await new Promise((r) => setTimeout(r, typingDuration));
+        const typingDuration = Math.min(Math.max(textLen * 20, 400), 1000);
+        (client as any).startTyping(jid, typingDuration).catch(() => {});
+        await new Promise((r) => setTimeout(r, Math.min(typingDuration, 600)));
         if (typeof (client as any).stopTyping === 'function') {
-          await (client as any).stopTyping(jid).catch(() => {});
+          (client as any).stopTyping(jid).catch(() => {});
         }
       }
     } catch (tErr) {
       // Non-blocking
     }
 
-    let result;
-    if (type === 'IMAGE' && url) {
-      result = await client.sendImage(jid, url, 'image-name', caption);
-    } else if (type === 'VIDEO' && url) {
-      result = await client.sendVideoAsGif(jid, url, 'video-name', caption);
-    } else {
-      result = await client.sendText(jid, text);
-    }
+    const sendWithTimeout = async () => {
+      if (type === 'IMAGE' && url) {
+        return await client.sendImage(jid, url, 'image-name', caption);
+      } else if (type === 'VIDEO' && url) {
+        return await client.sendVideoAsGif(jid, url, 'video-name', caption);
+      } else {
+        return await client.sendText(jid, text);
+      }
+    };
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('WhatsApp client timed out sending message after 20s')), 20000)
+    );
+
+    const result = await Promise.race([sendWithTimeout(), timeoutPromise]);
     
+    console.log(`[Worker /messages/send] Message sent successfully to ${jid} via ${deviceId} in ${Date.now() - startTime}ms`);
     res.json({ success: true, result, jid });
   } catch (error: any) {
-    console.error(`Failed to send message via worker to ${jid}:`, error);
+    console.error(`Failed to send message via worker to ${jid}:`, error?.message || error);
     res.status(500).json({ error: error?.message || 'Failed to send message via worker' });
   }
 });
