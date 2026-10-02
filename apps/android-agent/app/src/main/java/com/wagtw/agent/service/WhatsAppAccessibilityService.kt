@@ -85,17 +85,30 @@ class WhatsAppAccessibilityService : AccessibilityService() {
             return
         }
 
-        // 1. DETECT WHATSAPP ERROR DIALOGS & SUSPEND / BANNED
+        // 1. DETECT WHATSAPP ERROR DIALOGS, LOGGED OUT SCREEN, & SUSPEND / BANNED
         val errorKeywords = listOf(
+            // Welcome / Logged out / Reset Screen (from fresh install, reset, or ban logout)
+            "Selamat datang di WhatsApp",
+            "Welcome to WhatsApp",
+            "Setuju dan lanjutkan",
+            "Agree and continue",
+            "Kebijakan Privasi kami",
+            "Ketentuan Layanan kami",
+
+            // Unregistered / Invalid Number
             "Kirim undangan melalui SMS",
             "tidak terdaftar di WhatsApp",
             "isn't on WhatsApp",
             "not on WhatsApp",
             "tidak valid",
             "invalid phone",
+
+            // Rate Limited / New Chat Restrictions
             "tidak bisa memulai obrolan baru",
             "tidak bisa memulai chat baru",
             "Akun Anda dibatasi",
+
+            // Banned / Suspended / Logout
             "tidak diizinkan menggunakan WhatsApp",
             "This account is not allowed",
             "telah diblokir",
@@ -117,6 +130,11 @@ class WhatsAppAccessibilityService : AccessibilityService() {
             val found = rootNode.findAccessibilityNodeInfosByText(err)
             if (found.isNotEmpty()) {
                 when {
+                    err.contains("Selamat datang", true) || err.contains("Welcome to", true) ||
+                    err.contains("Setuju dan lanjutkan", true) || err.contains("Agree and continue", true) -> {
+                        detectedError = "WhatsApp belum login / ter-logout (Layar Selamat Datang)"
+                        isSuspended = true
+                    }
                     err.contains("terdaftar", true) || err.contains("undangan", true) || err.contains("on WhatsApp", true) || err.contains("valid", true) -> {
                         detectedError = "Nomor tujuan tidak terdaftar di WhatsApp"
                     }

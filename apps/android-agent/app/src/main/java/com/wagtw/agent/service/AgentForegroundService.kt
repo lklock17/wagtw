@@ -36,7 +36,9 @@ class AgentForegroundService : Service() {
 
     companion object {
         const val CHANNEL_ID = "wagtw_agent_channel"
+        const val CHANNEL_ALERT_ID = "wagtw_agent_alert_channel"
         const val NOTIFICATION_ID = 1001
+        const val ALERT_NOTIFICATION_ID = 2002
 
         var onLogReceived: ((String) -> Unit)? = null
         var onStatusChanged: ((Boolean) -> Unit)? = null
@@ -48,12 +50,48 @@ class AgentForegroundService : Service() {
             }
         }
 
+        fun showNotificationAlert(context: Context, title: String, message: String, isError: Boolean = true) {
+            try {
+                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                val notif = NotificationCompat.Builder(context, CHANNEL_ALERT_ID)
+                    .setContentTitle(title)
+                    .setContentText(message)
+                    .setSmallIcon(if (isError) android.R.drawable.stat_notify_error else android.R.drawable.stat_notify_chat)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setAutoCancel(true)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                    .build()
+                manager.notify(ALERT_NOTIFICATION_ID, notif)
+            } catch (e: Exception) {
+                Log.e("WAGTW_AGENT", "Failed to show notification alert: ${e.message}")
+            }
+        }
+
+        fun updateServiceStatus(contentText: String) {
+            instance?.let { s ->
+                try {
+                    val notif = s.createNotification(contentText)
+                    val manager = s.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    manager.notify(NOTIFICATION_ID, notif)
+                } catch (e: Exception) {}
+            }
+        }
+
         fun notifyMessageSent(messageId: String) {
             instance?.reportMessageStatus(messageId, "SENT")
+            instance?.let {
+                showNotificationAlert(it.applicationContext, "✅ Pesan WhatsApp Terkirim", "Pesan berhasil dikirim otomatis via WhatsApp.", isError = false)
+                updateServiceStatus("✅ Pesan terakhir berhasil dikirim")
+            }
         }
 
         fun notifyMessageFailed(messageId: String, error: String, deviceStatus: String? = null) {
             instance?.reportMessageStatus(messageId, "FAILED", error, deviceStatus)
+            instance?.let {
+                val title = if (deviceStatus == "SUSPENDED") "⚠️ WhatsApp Belum Login / Terputus!" else "❌ Gagal Mengirim Pesan WhatsApp"
+                showNotificationAlert(it.applicationContext, title, error, isError = true)
+                updateServiceStatus("❌ Gagal: $error")
+            }
         }
 
         fun sendDirectTest(context: Context, to: String, text: String, forcedPkg: String? = null, dualAppTarget: String? = null) {
@@ -340,13 +378,24 @@ class AgentForegroundService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "WAGTW Service Channel",
                 NotificationManager.IMPORTANCE_LOW
             )
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
+
+            val alertChannel = NotificationChannel(
+                CHANNEL_ALERT_ID,
+                "WAGTW Peringatan & Status Pesan",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Pemberitahuan status pesan terkirim atau gagal dan akun terputus"
+                enableVibration(true)
+            }
+            manager.createNotificationChannel(alertChannel)
         }
     }
 
