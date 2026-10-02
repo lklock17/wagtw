@@ -166,15 +166,18 @@ class MainActivity : AppCompatActivity() {
         etDeviceName.setText(prefs.deviceName)
         tvDeviceHeaderName.text = prefs.deviceName
 
+        val isBusinessInstalled = AgentForegroundService.isPackageInstalled(this, "com.whatsapp.w4b")
+        val isPersonalInstalled = AgentForegroundService.isPackageInstalled(this, "com.whatsapp")
+
         // Business
         etBusinessPhone.setText(prefs.businessPhone)
-        cbEnableBusiness.isChecked = prefs.isBusinessEnabled
+        cbEnableBusiness.isChecked = if (!isBusinessInstalled) false else prefs.isBusinessEnabled
         etBusinessPhone2.setText(prefs.businessPhone2)
-        cbEnableBusiness2.isChecked = prefs.isBusiness2Enabled
+        cbEnableBusiness2.isChecked = if (!isBusinessInstalled) false else prefs.isBusiness2Enabled
 
         // Personal
         etPersonalPhone.setText(prefs.personalPhone)
-        cbEnablePersonal.isChecked = prefs.isPersonalEnabled
+        cbEnablePersonal.isChecked = if (!isBusinessInstalled && isPersonalInstalled) true else prefs.isPersonalEnabled
         etPersonalPhone2.setText(prefs.personalPhone2)
         cbEnablePersonal2.isChecked = prefs.isPersonal2Enabled
 
@@ -192,7 +195,8 @@ class MainActivity : AppCompatActivity() {
     private fun updateBadges() {
         tvDeviceHeaderName.text = prefs.deviceName
 
-        val businessCount = (if (prefs.isBusinessEnabled) 1 else 0) + (if (prefs.isBusiness2Enabled) 1 else 0)
+        val isBusinessInstalled = AgentForegroundService.isPackageInstalled(this, "com.whatsapp.w4b")
+        val businessCount = if (isBusinessInstalled) (if (prefs.isBusinessEnabled) 1 else 0) + (if (prefs.isBusiness2Enabled) 1 else 0) else 0
         badgeBusinessStatus.text = if (businessCount > 0) "💼 Bisnis: $businessCount Akun" else "💼 Bisnis: OFF"
         badgeBusinessStatus.setTextColor(
             ContextCompat.getColor(this, if (businessCount > 0) R.color.primary else R.color.text_muted)
@@ -217,10 +221,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveAccountSettings() {
+        val isBusinessInstalled = AgentForegroundService.isPackageInstalled(this, "com.whatsapp.w4b")
+
         prefs.businessPhone = etBusinessPhone.text.toString().trim()
-        prefs.isBusinessEnabled = cbEnableBusiness.isChecked
+        prefs.isBusinessEnabled = if (!isBusinessInstalled) false else cbEnableBusiness.isChecked
         prefs.businessPhone2 = etBusinessPhone2.text.toString().trim()
-        prefs.isBusiness2Enabled = cbEnableBusiness2.isChecked
+        prefs.isBusiness2Enabled = if (!isBusinessInstalled) false else cbEnableBusiness2.isChecked
 
         prefs.personalPhone = etPersonalPhone.text.toString().trim()
         prefs.isPersonalEnabled = cbEnablePersonal.isChecked

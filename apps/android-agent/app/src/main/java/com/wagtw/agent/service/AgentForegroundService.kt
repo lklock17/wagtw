@@ -94,9 +94,40 @@ class AgentForegroundService : Service() {
             }
         }
 
+        fun isPackageInstalled(context: Context, pkg: String): Boolean {
+            return try {
+                context.packageManager.getPackageInfo(pkg, 0)
+                true
+            } catch (e: Exception) {
+                false
+            }
+        }
+
+        fun resolveSafeTargetPackage(context: Context, requestedPkg: String?): String {
+            val isBusinessInstalled = isPackageInstalled(context, "com.whatsapp.w4b")
+            val isPersonalInstalled = isPackageInstalled(context, "com.whatsapp")
+
+            if (requestedPkg == "com.whatsapp.w4b") {
+                if (isBusinessInstalled) return "com.whatsapp.w4b"
+                if (isPersonalInstalled) {
+                    appendLog("⚠️ WhatsApp Business tidak terpasang di HP ini, dialihkan otomatis ke WhatsApp Personal")
+                    return "com.whatsapp"
+                }
+            } else if (requestedPkg == "com.whatsapp") {
+                if (isPersonalInstalled) return "com.whatsapp"
+                if (isBusinessInstalled) {
+                    appendLog("⚠️ WhatsApp Personal tidak terpasang di HP ini, dialihkan otomatis ke WhatsApp Business")
+                    return "com.whatsapp.w4b"
+                }
+            }
+
+            return if (isPersonalInstalled) "com.whatsapp" else if (isBusinessInstalled) "com.whatsapp.w4b" else (requestedPkg ?: "com.whatsapp")
+        }
+
         fun sendDirectTest(context: Context, to: String, text: String, forcedPkg: String? = null, dualAppTarget: String? = null) {
             val prefs = PrefsManager(context)
-            val targetPkg = forcedPkg ?: if (prefs.isBusinessEnabled) "com.whatsapp.w4b" else "com.whatsapp"
+            val defaultPkg = if (prefs.isPersonalEnabled && !prefs.isBusinessEnabled) "com.whatsapp" else if (prefs.isBusinessEnabled) "com.whatsapp.w4b" else "com.whatsapp"
+            val targetPkg = resolveSafeTargetPackage(context, forcedPkg ?: defaultPkg)
             val appLabel = if (targetPkg == "com.whatsapp.w4b") "WhatsApp Business" else "WhatsApp Personal"
 
             try {
@@ -109,7 +140,9 @@ class AgentForegroundService : Service() {
                 val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleaned&text=$encoded")
 
                 val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                    setPackage(targetPkg)
+                    if (isPackageInstalled(context, targetPkg)) {
+                        setPackage(targetPkg)
+                    }
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 }
                 context.startActivity(intent)
@@ -195,18 +228,27 @@ class AgentForegroundService : Service() {
     private fun registerDevice() {
         try {
             val serverUrl = prefs.serverUrl.trimEnd('/')
+            val isBusinessInstalled = isPackageInstalled(applicationContext, "com.whatsapp.w4b")
+            val isPersonalInstalled = isPackageInstalled(applicationContext, "com.whatsapp")
+
+            // Auto-detect installed packages
+            val enableBusiness = prefs.isBusinessEnabled && isBusinessInstalled
+            val enableBusiness2 = prefs.isBusiness2Enabled && isBusinessInstalled
+            val enablePersonal = if (!isBusinessInstalled && isPersonalInstalled) true else prefs.isPersonalEnabled
+            val enablePersonal2 = prefs.isPersonal2Enabled
+
             val json = JSONObject().apply {
                 put("phoneId", prefs.phoneId)
                 put("name", prefs.deviceName)
                 put("businessPhone", prefs.businessPhone)
-                put("enableBusiness", prefs.isBusinessEnabled)
+                put("enableBusiness", enableBusiness)
                 put("businessPhone2", prefs.businessPhone2)
-                put("enableBusiness2", prefs.isBusiness2Enabled)
+                put("enableBusiness2", enableBusiness2)
                 put("personalPhone", prefs.personalPhone)
-                put("enablePersonal", prefs.isPersonalEnabled)
+                put("enablePersonal", enablePersonal)
                 put("personalPhone2", prefs.personalPhone2)
-                put("enablePersonal2", prefs.isPersonal2Enabled)
-                put("phone", prefs.businessPhone.ifEmpty { prefs.personalPhone })
+                put("enablePersonal2", enablePersonal2)
+                put("phone", if (enablePersonal && prefs.personalPhone.isNotEmpty()) prefs.personalPhone else prefs.businessPhone.ifEmpty { prefs.personalPhone })
                 put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
             }
 
@@ -273,16 +315,19 @@ class AgentForegroundService : Service() {
                                     val type = msg.optString("type", "MESSAGE")
                                     val msgDeviceId = msg.optString("deviceId", "")
                                     
-                                    val (targetPkg, autoDualAppTarget, label) = when (msgDeviceId) {
-                                        prefs.businessDeviceId2 -> Triple("com.whatsapp.w4b", "ACCOUNT_2", "WA Bisnis (Slot 2 Dual)")
-                                        prefs.businessDeviceId -> Triple("com.whatsapp.w4b", "ACCOUNT_1", "WA Bisnis (Slot 1)")
-                                        prefs.personalDeviceId2 -> Triple("com.whatsapp", "ACCOUNT_2", "WA Personal (Slot 2 Dual)")
-                                        prefs.personalDeviceId -> Triple("com.whatsapp", "ACCOUNT_1", "WA Personal (Slot 1)")
-                                        else -> Triple(
-                                            if (prefs.isBusinessEnabled) "com.whatsapp.w4b" else "com.whatsapp",
-                                            null,
-                                            "WhatsApp"
-                                        )
+                                    val serverTargetPkg = msg.optString("targetPackage", "")
+                                    val computedPkg = when (msgDeviceId) {
+                                        prefs.businessDeviceId2, prefs.businessDeviceId -> "com.whatsapp.w4b"
+                                        prefs.personalDeviceId2, prefs.personalDeviceId -> "com.whatsapp"
+                                        else -> if (prefs.isPersonalEnabled && !prefs.isBusinessEnabled) "com.whatsapp" else if (prefs.isBusinessEnabled) "com.whatsapp.w4b" else "com.whatsapp"
+                                    }
+                                    val rawPkg = if (serverTargetPkg.isNotEmpty()) serverTargetPkg else computedPkg
+                                    val targetPkg = resolveSafeTargetPackage(applicationContext, rawPkg)
+                                    val label = if (targetPkg == "com.whatsapp.w4b") "Business" else "Personal"
+
+                                    val autoDualAppTarget = when (msgDeviceId) {
+                                        prefs.businessDeviceId2, prefs.personalDeviceId2 -> "ACCOUNT_2"
+                                        else -> "ACCOUNT_1"
                                     }
                                     val dualAppTarget = if (msg.has("dualAppTarget")) msg.getString("dualAppTarget") else autoDualAppTarget
 
@@ -331,7 +376,9 @@ class AgentForegroundService : Service() {
             appendLog("📲 Membuka $appLabel untuk $cleaned...")
 
             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                setPackage(targetPkg)
+                if (isPackageInstalled(applicationContext, targetPkg)) {
+                    setPackage(targetPkg)
+                }
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
 
@@ -350,7 +397,9 @@ class AgentForegroundService : Service() {
 
             val uri = Uri.parse(inviteUrl)
             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                setPackage(targetPkg)
+                if (isPackageInstalled(applicationContext, targetPkg)) {
+                    setPackage(targetPkg)
+                }
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
 
