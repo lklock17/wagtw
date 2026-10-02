@@ -6,6 +6,8 @@ import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.wagtw.agent.util.PrefsManager
+import java.util.Random
 
 class WhatsAppAccessibilityService : AccessibilityService() {
 
@@ -14,13 +16,15 @@ class WhatsAppAccessibilityService : AccessibilityService() {
         var isRunning: Boolean = false
         var isWaitingForSend: Boolean = false
         var lastSentMessageId: String? = null
+        var forcedDualAppAccount: String? = null
 
         private val watchdogHandler = Handler(Looper.getMainLooper())
         private var watchdogRunnable: Runnable? = null
 
-        fun startSendWatchdog(msgId: String) {
+        fun startSendWatchdog(msgId: String, dualAppTarget: String? = null) {
             cancelWatchdog()
             lastSentMessageId = msgId
+            forcedDualAppAccount = dualAppTarget
             isWaitingForSend = true
 
             watchdogRunnable = Runnable {
@@ -29,6 +33,7 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                     val currentMsgId = lastSentMessageId
                     isWaitingForSend = false
                     lastSentMessageId = null
+                    forcedDualAppAccount = null
 
                     AgentForegroundService.appendLog("⚠️ Gagal: Timeout tombol kirim WhatsApp (14 detik)")
                     if (currentMsgId != null) {
@@ -48,6 +53,7 @@ class WhatsAppAccessibilityService : AccessibilityService() {
         fun cancelWatchdog() {
             watchdogRunnable?.let { watchdogHandler.removeCallbacks(it) }
             watchdogRunnable = null
+            forcedDualAppAccount = null
         }
     }
 
@@ -64,9 +70,19 @@ class WhatsAppAccessibilityService : AccessibilityService() {
         if (event == null) return
 
         val pkg = event.packageName?.toString() ?: return
-        if (pkg != "com.whatsapp" && pkg != "com.whatsapp.w4b") return
+
+        val isWhatsApp = pkg == "com.whatsapp" || pkg == "com.whatsapp.w4b"
+        val isDualAppDialog = pkg.contains("miui") || pkg == "android" || pkg.contains("resolver") || pkg.contains("xspace")
+
+        if (!isWhatsApp && !isDualAppDialog) return
 
         val rootNode = rootInActiveWindow ?: return
+
+        // 0. HANDLE XIAOMI DUAL APP DIALOG
+        if (isDualAppDialog) {
+            handleXiaomiDualAppDialog(rootNode)
+            return
+        }
 
         // 1. DETECT WHATSAPP ERROR DIALOGS & BOTTOM SHEETS
         val errorKeywords = listOf(
@@ -261,6 +277,106 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                     break
                 }
             }
+        }
+    }
+
+    private var lastDualAppClickTime: Long = 0L
+
+    private fun handleXiaomiDualAppDialog(rootNode: AccessibilityNodeInfo) {
+        if (System.currentTimeMillis() - lastDualAppClickTime < 1500) return
+
+        val prefs = PrefsManager(applicationContext)
+        val mode = forcedDualAppAccount ?: prefs.dualAppMode
+        if (mode == "OFF") {
+            // Dual App auto-choice is disabled in settings
+            return
+        }
+
+        // Find candidate WhatsApp items in Xiaomi / Android resolver dialog
+        val waNodes = mutableListOf<AccessibilityNodeInfo>()
+        waNodes.addAll(rootNode.findAccessibilityNodeInfosByText("WhatsApp"))
+        waNodes.addAll(rootNode.findAccessibilityNodeInfosByText("Dual"))
+        waNodes.addAll(rootNode.findAccessibilityNodeInfosByText("Ganda"))
+
+        val candidates = mutableListOf<AccessibilityNodeInfo>()
+        for (node in waNodes) {
+            // Traverse up to find the clickable container or the node itself
+            var curr: AccessibilityNodeInfo? = node
+            var clickableContainer: AccessibilityNodeInfo? = null
+            var depth = 0
+            while (curr != null && depth < 5) {
+                if (curr.isClickable) {
+                    clickableContainer = curr
+                    break
+                }
+                curr = curr.parent
+                depth++
+            }
+            val target = clickableContainer ?: node
+            if (!candidates.contains(target)) {
+                candidates.add(target)
+            }
+        }
+
+        if (candidates.isEmpty()) return
+
+        // Determine which candidate to pick
+        // candidates[0] is typically Akun 1 (Utama)
+        // candidates[1] is typically Akun 2 (Dual App / Kloningan)
+        val chosenIndex: Int = when (mode) {
+            "ACCOUNT_1", "1" -> 0
+            "ACCOUNT_2", "2" -> if (candidates.size > 1) 1 else 0
+            "RANDOM" -> if (candidates.size > 1) Random().nextInt(candidates.size) else 0
+            "ALTERNATING" -> {
+                val next = (prefs.lastDualAppIndex + 1) % candidates.size
+                prefs.lastDualAppIndex = next
+                next
+            }
+            else -> 0
+        }
+
+        val chosenNode = candidates.getOrNull(chosenIndex) ?: candidates.firstOrNull() ?: return
+
+        val clicked = if (chosenNode.isClickable) {
+            chosenNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        } else {
+            chosenNode.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+        }
+
+        if (clicked) {
+            lastDualAppClickTime = System.currentTimeMillis()
+            val label = when {
+                mode == "ACCOUNT_1" || mode == "1" -> "Akun 1 (Utama)"
+                mode == "ACCOUNT_2" || mode == "2" -> "Akun 2 (Dual App)"
+                mode == "RANDOM" -> "Acak (Pilihan #${chosenIndex + 1})"
+                mode == "ALTERNATING" -> "Bergantian (Pilihan #${chosenIndex + 1})"
+                else -> "Pilihan #${chosenIndex + 1}"
+            }
+            AgentForegroundService.appendLog("📲 [Xiaomi Dual App] Memilih otomatis: $label")
+
+            // In some MIUI versions, there is a "Hanya sekali" (Just once) button
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    val activeWindow = rootInActiveWindow ?: return@postDelayed
+                    val onceButtons = mutableListOf<AccessibilityNodeInfo>()
+                    onceButtons.addAll(activeWindow.findAccessibilityNodeInfosByText("Hanya sekali"))
+                    onceButtons.addAll(activeWindow.findAccessibilityNodeInfosByText("Just once"))
+                    onceButtons.addAll(activeWindow.findAccessibilityNodeInfosByText("Buka"))
+                    onceButtons.addAll(activeWindow.findAccessibilityNodeInfosByViewId("android:id/button_once"))
+
+                    for (btn in onceButtons) {
+                        if (btn.isClickable) {
+                            btn.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            break
+                        } else if (btn.parent?.isClickable == true) {
+                            btn.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            break
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("WAGTW_ACCESSIBILITY", "Error confirming once button: ${e.message}")
+                }
+            }, 300)
         }
     }
 

@@ -31,6 +31,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cbEnablePersonal: CheckBox
     private lateinit var etPersonalPhone: EditText
 
+    private lateinit var rgDualAppMode: RadioGroup
+    private lateinit var rbDualAppOff: RadioButton
+    private lateinit var rbDualAppAcc1: RadioButton
+    private lateinit var rbDualAppAcc2: RadioButton
+    private lateinit var rbDualAppRandom: RadioButton
+
     private lateinit var rgTestWhatsAppType: RadioGroup
     private lateinit var rbTestBusiness: RadioButton
     private lateinit var rbTestPersonal: RadioButton
@@ -69,6 +75,12 @@ class MainActivity : AppCompatActivity() {
         cbEnablePersonal = findViewById(R.id.cbEnablePersonal)
         etPersonalPhone = findViewById(R.id.etPersonalPhone)
 
+        rgDualAppMode = findViewById(R.id.rgDualAppMode)
+        rbDualAppOff = findViewById(R.id.rbDualAppOff)
+        rbDualAppAcc1 = findViewById(R.id.rbDualAppAcc1)
+        rbDualAppAcc2 = findViewById(R.id.rbDualAppAcc2)
+        rbDualAppRandom = findViewById(R.id.rbDualAppRandom)
+
         rgTestWhatsAppType = findViewById(R.id.rgTestWhatsAppType)
         rbTestBusiness = findViewById(R.id.rbTestBusiness)
         rbTestPersonal = findViewById(R.id.rbTestPersonal)
@@ -91,6 +103,13 @@ class MainActivity : AppCompatActivity() {
         etPersonalPhone.setText(prefs.personalPhone)
         cbEnablePersonal.isChecked = prefs.isPersonalEnabled
 
+        when (prefs.dualAppMode) {
+            "ACCOUNT_1" -> rbDualAppAcc1.isChecked = true
+            "ACCOUNT_2" -> rbDualAppAcc2.isChecked = true
+            "RANDOM", "ALTERNATING" -> rbDualAppRandom.isChecked = true
+            else -> rbDualAppOff.isChecked = true
+        }
+
         updateStatus(prefs.isServiceRunning)
     }
 
@@ -101,9 +120,19 @@ class MainActivity : AppCompatActivity() {
         prefs.isBusinessEnabled = cbEnableBusiness.isChecked
         prefs.personalPhone = etPersonalPhone.text.toString().trim()
         prefs.isPersonalEnabled = cbEnablePersonal.isChecked
+
+        prefs.dualAppMode = when {
+            rbDualAppAcc1.isChecked -> "ACCOUNT_1"
+            rbDualAppAcc2.isChecked -> "ACCOUNT_2"
+            rbDualAppRandom.isChecked -> "RANDOM"
+            else -> "OFF"
+        }
     }
 
     private fun setupListeners() {
+        rgDualAppMode.setOnCheckedChangeListener { _, _ ->
+            saveConfig()
+        }
         btnQuickTestSend.setOnClickListener {
             val phone = etTestPhone.text.toString().trim()
             if (phone.isEmpty()) {

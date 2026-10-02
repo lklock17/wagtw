@@ -56,13 +56,13 @@ class AgentForegroundService : Service() {
             instance?.reportMessageStatus(messageId, "FAILED", error)
         }
 
-        fun sendDirectTest(context: Context, to: String, text: String, forcedPkg: String? = null) {
+        fun sendDirectTest(context: Context, to: String, text: String, forcedPkg: String? = null, dualAppTarget: String? = null) {
             val prefs = PrefsManager(context)
             val targetPkg = forcedPkg ?: if (prefs.isBusinessEnabled) "com.whatsapp.w4b" else "com.whatsapp"
             val appLabel = if (targetPkg == "com.whatsapp.w4b") "WhatsApp Business" else "WhatsApp Personal"
 
             try {
-                WhatsAppAccessibilityService.startSendWatchdog("test_${System.currentTimeMillis()}")
+                WhatsAppAccessibilityService.startSendWatchdog("test_${System.currentTimeMillis()}", dualAppTarget)
 
                 var cleaned = to.replace(Regex("[^0-9]"), "")
                 if (cleaned.startsWith("0")) cleaned = "62" + cleaned.substring(1)
@@ -219,6 +219,7 @@ class AgentForegroundService : Service() {
                                     val msgId = msg.getString("id")
                                     val type = msg.optString("type", "MESSAGE")
                                     val msgDeviceId = msg.optString("deviceId", "")
+                                    val dualAppTarget = if (msg.has("dualAppTarget")) msg.getString("dualAppTarget") else null
                                     val targetPkg = if (msgDeviceId == prefs.personalDeviceId) {
                                         "com.whatsapp"
                                     } else {
@@ -229,13 +230,13 @@ class AgentForegroundService : Service() {
                                     if (type == "JOIN_GROUP") {
                                         val inviteUrl = msg.getString("inviteUrl")
                                         appendLog("👥 Membuka tautan grup ($label): $inviteUrl")
-                                        dispatchJoinGroup(msgId, inviteUrl, targetPkg)
+                                        dispatchJoinGroup(msgId, inviteUrl, targetPkg, dualAppTarget)
                                         Thread.sleep(12000)
                                     } else {
                                         val to = msg.getString("to")
                                         val text = msg.getString("text")
                                         appendLog("📤 Mengirim ke $to ($label): $text")
-                                        dispatchWhatsAppMessage(msgId, to, text, targetPkg)
+                                        dispatchWhatsAppMessage(msgId, to, text, targetPkg, dualAppTarget)
                                         // Wait between messages (human delay 6-10s)
                                         Thread.sleep(7000)
                                     }
@@ -256,9 +257,9 @@ class AgentForegroundService : Service() {
         }
     }
 
-    private fun dispatchWhatsAppMessage(messageId: String, to: String, text: String, targetPkg: String) {
+    private fun dispatchWhatsAppMessage(messageId: String, to: String, text: String, targetPkg: String, dualAppTarget: String? = null) {
         try {
-            WhatsAppAccessibilityService.startSendWatchdog(messageId)
+            WhatsAppAccessibilityService.startSendWatchdog(messageId, dualAppTarget)
 
             // Clean number to digits
             var cleaned = to.replace(Regex("[^0-9]"), "")
@@ -282,9 +283,9 @@ class AgentForegroundService : Service() {
         }
     }
 
-    private fun dispatchJoinGroup(taskId: String, inviteUrl: String, targetPkg: String) {
+    private fun dispatchJoinGroup(taskId: String, inviteUrl: String, targetPkg: String, dualAppTarget: String? = null) {
         try {
-            WhatsAppAccessibilityService.startSendWatchdog(taskId)
+            WhatsAppAccessibilityService.startSendWatchdog(taskId, dualAppTarget)
             val appLabel = if (targetPkg == "com.whatsapp.w4b") "WhatsApp Business" else "WhatsApp Personal"
             appendLog("📲 Membuka tautan undangan grup via $appLabel...")
 

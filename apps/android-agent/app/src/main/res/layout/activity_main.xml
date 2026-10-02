@@ -204,6 +204,77 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Xiaomi Dual App (Aplikasi Ganda) Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="2dp"
+            app:strokeColor="@color/border"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="♊ Mode Xiaomi Dual App (Aplikasi Ganda)"
+                    android:textColor="@color/text_main"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Pilih akun WhatsApp mana yang otomatis dipilih saat pop-up pemilih Xiaomi muncul:"
+                    android:textColor="@color/text_muted"
+                    android:textSize="12sp"
+                    android:layout_marginBottom="10dp" />
+
+                <RadioGroup
+                    android:id="@+id/rgDualAppMode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <RadioButton
+                        android:id="@+id/rbDualAppOff"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Nonaktif (Pilih manual / Tanpa Dual App)"
+                        android:textSize="13sp"
+                        android:checked="true" />
+
+                    <RadioButton
+                        android:id="@+id/rbDualAppAcc1"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Selalu Akun 1 (WhatsApp Utama)"
+                        android:textSize="13sp" />
+
+                    <RadioButton
+                        android:id="@+id/rbDualAppAcc2"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Selalu Akun 2 (WhatsApp Ganda / Kloning)"
+                        android:textSize="13sp" />
+
+                    <RadioButton
+                        android:id="@+id/rbDualAppRandom"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Acak / Bergantian (Round-Robin 50:50)"
+                        android:textSize="13sp" />
+                </RadioGroup>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Test Send Card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"

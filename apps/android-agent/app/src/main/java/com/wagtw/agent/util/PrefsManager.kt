@@ -56,4 +56,13 @@ class PrefsManager(context: Context) {
     var isServiceRunning: Boolean
         get() = prefs.getBoolean("is_service_running", false)
         set(value) = prefs.edit().putBoolean("is_service_running", value).apply()
+
+    // Xiaomi Dual App Settings ("OFF", "ACCOUNT_1", "ACCOUNT_2", "RANDOM", "ALTERNATING")
+    var dualAppMode: String
+        get() = prefs.getString("dual_app_mode", "OFF") ?: "OFF"
+        set(value) = prefs.edit().putString("dual_app_mode", value).apply()
+
+    var lastDualAppIndex: Int
+        get() = prefs.getInt("last_dual_app_index", 0)
+        set(value) = prefs.edit().putInt("last_dual_app_index", value).apply()
 }
