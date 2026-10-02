@@ -73,18 +73,14 @@ export default function Dashboard() {
         failover: true
       });
       const sentVia = res.data?.data?.sentVia;
-      if (sentVia?.type === 'ANDROID_AGENT') {
-        setQuickAlert(`⏳ Pesan diantrekan ke HP Android (${sentVia.deviceName}). Menunggu kirim di ponsel...`);
-      } else {
-        setQuickAlert('✅ Pesan berhasil dikirim!');
-      }
+      setQuickAlert(`✅ Pesan berhasil dikirim${sentVia?.deviceName ? ` via ${sentVia.deviceName}` : ''}!`);
       setQuickTo('');
       setQuickMsg('');
       setTimeout(() => {
         setQuickAlert(null);
         setShowQuickSend(false);
         loadDashboard();
-      }, 2500);
+      }, 2000);
     } catch (err: any) {
       setQuickAlert('Gagal mengirim: ' + (err.response?.data?.error || err.message));
     } finally {

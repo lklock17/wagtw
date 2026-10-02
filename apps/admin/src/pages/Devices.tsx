@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, 
   Smartphone, 
@@ -234,7 +234,7 @@ export default function Devices() {
 
   const handleSendTestMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!testModalDevice || !testPhone.trim()) return;
+    if (!testModalDevice || !testPhone.trim() || !testMessage.trim()) return;
     setSendingTest(true);
     setTestSentStatus(null);
     try {
@@ -244,18 +244,13 @@ export default function Devices() {
         to: formattedTo,
         text: testMessage
       });
-      const isAgent = testModalDevice.sessionData?.includes('ANDROID_AGENT');
-      if (isAgent) {
-        setTestSentStatus('⏳ Pesan diantrekan ke HP Android (Menunggu proses kirim oleh WhatsApp ponsel)...');
-      } else {
-        setTestSentStatus('✅ Pesan berhasil terkirim!');
-      }
+      setTestSentStatus('✅ Pesan berhasil terkirim ke WhatsApp ponsel!');
       setTimeout(() => {
         setTestModalDevice(null);
         setTestSentStatus(null);
-      }, 2500);
+      }, 2000);
     } catch (err: any) {
-      setTestSentStatus(`Gagal kirim: ${err.response?.data?.error || err.message}`);
+      setTestSentStatus(`❌ Gagal kirim: ${err.response?.data?.error || err.message}`);
     } finally {
       setSendingTest(false);
     }
@@ -306,10 +301,64 @@ export default function Devices() {
     }
   };
 
+  // Group devices: Physical Phone Groups for Android Agent, and standalone web devices
+  const { phoneGroups, webDevices } = useMemo(() => {
+    const groupsMap = new Map<string, {
+      phoneId: string;
+      phoneName: string;
+      model: string;
+      devices: any[];
+    }>();
+    const web: any[] = [];
+
+    devices.forEach((device) => {
+      let isAgent = false;
+      let phoneId = '';
+      let phoneName = '';
+      let model = 'Android Phone';
+
+      try {
+        const s = JSON.parse(device.sessionData || '{}');
+        if (s.type === 'ANDROID_AGENT') {
+          isAgent = true;
+          const cleanBase = (s.phoneName || device.name)
+            .replace(/\s*\(Business\)/gi, '')
+            .replace(/\s*\(Personal\)/gi, '')
+            .replace(/\s*-\s*Bisnis.*/gi, '')
+            .replace(/\s*-\s*Personal.*/gi, '')
+            .trim();
+
+          phoneId = s.phoneId || `phone_${cleanBase.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+          phoneName = s.phoneName || cleanBase || 'HP Agen';
+          model = s.model || 'Android Phone';
+        }
+      } catch (e) {}
+
+      if (isAgent) {
+        if (!groupsMap.has(phoneId)) {
+          groupsMap.set(phoneId, {
+            phoneId,
+            phoneName,
+            model,
+            devices: []
+          });
+        }
+        groupsMap.get(phoneId)!.devices.push(device);
+      } else {
+        web.push(device);
+      }
+    });
+
+    return {
+      phoneGroups: Array.from(groupsMap.values()),
+      webDevices: web
+    };
+  }, [devices]);
+
   return (
-    <div className="space-y-5 max-w-6xl mx-auto pb-12">
+    <div className="space-y-6 max-w-6xl mx-auto pb-12">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-2 border-b border-slate-200">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-200">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">Manajemen WhatsApp Devices</h1>
           <div className="flex flex-wrap items-center gap-2 mt-1">
@@ -322,6 +371,11 @@ export default function Devices() {
                 {devices.some(d => d.isPaused) && (
                   <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
                     {devices.filter(d => d.isPaused).length} Dijeda
+                  </span>
+                )}
+                {phoneGroups.length > 0 && (
+                  <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                    {phoneGroups.length} Grup HP Fisik
                   </span>
                 )}
               </div>
@@ -347,12 +401,12 @@ export default function Devices() {
             className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg font-bold text-xs transition-all shadow-xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Tambah Device Baru</span>
+            <span>Tambah Web Device</span>
           </button>
         </div>
       </div>
 
-      {/* Device Grid */}
+      {/* Loading & Empty States */}
       {loading && devices.length === 0 ? (
         <div className="bg-white rounded-xl p-8 border border-slate-200 text-center flex flex-col items-center justify-center">
           <Loader2 className="w-6 h-6 text-emerald-600 animate-spin mb-2" />
@@ -365,7 +419,7 @@ export default function Devices() {
           </div>
           <h3 className="text-sm font-bold text-slate-800">Belum ada WhatsApp Device Terdaftar</h3>
           <p className="text-slate-500 text-xs mt-1 mb-4 max-w-md">
-            Mulai dengan menambahkan nama perangkat pertama Anda, lalu scan QR Code atau gunakan Kode Pairing 8-Digit.
+            Hubungkan aplikasi Android WAGTW Agent di ponsel Anda, atau tambahkan device baru untuk scan QR WhatsApp Web.
           </p>
           <button 
             onClick={() => setShowAddModal(true)}
@@ -376,204 +430,376 @@ export default function Devices() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {devices.map((device: any) => {
-            const isConnected = device.status === 'CONNECTED';
-            const isQR = device.status === 'QR_READY';
-            const isConnecting = device.status === 'CONNECTING' || connectingId === device.id;
-            const isAndroidAgent = (() => {
-              try {
-                const s = JSON.parse(device.sessionData || '{}');
-                return s.type === 'ANDROID_AGENT';
-              } catch (e) {
-                return false;
-              }
-            })();
-            const agentModel = (() => {
-              try {
-                const s = JSON.parse(device.sessionData || '{}');
-                return s.model || 'Android Phone';
-              } catch (e) {
-                return null;
-              }
-            })();
-            const agentTarget = (() => {
-              try {
-                const s = JSON.parse(device.sessionData || '{}');
-                return s.targetPackage || '';
-              } catch (e) {
-                return '';
-              }
-            })();
-
-            return (
-              <div 
-                key={device.id} 
-                className="bg-white rounded-xl border border-slate-200/80 shadow-xs hover:shadow-sm hover:border-slate-300 transition-all duration-150 flex flex-col justify-between overflow-hidden"
-              >
-                <div className="p-4">
-                  {/* Top Bar */}
-                  <div className="flex justify-between items-center mb-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-600">
-                      <Smartphone className="w-4 h-4 text-slate-700" />
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      {isAndroidAgent && (
-                        <span className={clsx(
-                          "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border",
-                          agentTarget === 'com.whatsapp.w4b' 
-                            ? "bg-sky-50 text-sky-700 border-sky-200" 
-                            : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                        )} title={agentModel || 'Android Agent'}>
-                          {agentTarget === 'com.whatsapp.w4b' ? '💼 WA Business' : '🟢 WA Personal'}
-                        </span>
-                      )}
-                      {device.isPaused && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-                          DIJEDA
-                        </span>
-                      )}
-                      <span className={clsx(
-                        "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider",
-                        device.isPaused ? "bg-slate-100 text-slate-500 border border-slate-200" :
-                        isConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60" :
-                        isQR ? "bg-blue-50 text-blue-700 border border-blue-200/60 animate-pulse" :
-                        isConnecting ? "bg-indigo-50 text-indigo-700 border border-indigo-200/60 animate-pulse" :
-                        "bg-slate-100 text-slate-600 border border-slate-200"
-                      )}>
-                        <span className={clsx(
-                          "w-1.5 h-1.5 rounded-full",
-                          device.isPaused ? "bg-amber-400" :
-                          isConnected ? "bg-emerald-500" :
-                          isQR ? "bg-blue-500" :
-                          isConnecting ? "bg-indigo-500" :
-                          "bg-slate-400"
-                        )}></span>
-                        {device.status}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Device Info */}
-                  <h3 className="text-sm font-bold text-slate-900 truncate" title={device.name}>
-                    {device.name}
-                  </h3>
-                  <div className="flex items-center gap-1.5 mt-0.5 mb-2.5 text-[11px] text-slate-500">
-                    <span>Nomor:</span>
-                    <span className="font-semibold text-slate-800 font-mono">
-                      {device.phoneNumber ? `+${device.phoneNumber}` : 'Belum Terhubung'}
-                    </span>
-                  </div>
-
-                  {/* Webhook & Features Pill */}
-                  <div className="flex flex-wrap gap-1.5 pt-2 border-t border-slate-100">
-                    <button 
-                      onClick={() => {
-                        setWebhookDevice(device);
-                        setWebhookUrl(device.webhookUrl || '');
-                        setWebhookTestResult(null);
-                      }}
-                      className={clsx(
-                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors border cursor-pointer",
-                        device.webhookUrl 
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-200/80 hover:bg-emerald-100" 
-                          : "bg-slate-50 text-slate-500 border-slate-200/60 hover:bg-slate-100"
-                      )}
-                    >
-                      <Globe className="w-3 h-3" />
-                      <span>{device.webhookUrl ? 'Webhook Aktif' : 'Atur Webhook'}</span>
-                    </button>
-
-                    {device.autoReply && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                        <Sparkles className="w-3 h-3 text-emerald-600" />
-                        <span>AI 9routes Active</span>
-                      </span>
-                    )}
-                  </div>
+        <div className="space-y-8">
+          {/* SECTION 1: Android Agent - 1 Card per Physical Phone */}
+          {phoneGroups.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                  <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+                    Grup Ponsel Android Agent ({phoneGroups.length} HP Fisik)
+                  </h2>
                 </div>
-
-                {/* Action Footer */}
-                <div className="bg-slate-50/80 px-3.5 py-2 border-t border-slate-100 flex items-center justify-between gap-1.5">
-                  <div className="flex items-center gap-1.5">
-                    {isConnected ? (
-                      <>
-                        <button 
-                          onClick={() => {
-                            setTestModalDevice(device);
-                            setTestPhone('');
-                            setTestSentStatus(null);
-                          }}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs font-bold transition-all shadow-xs cursor-pointer"
-                        >
-                          <SendIcon className="w-3.5 h-3.5" />
-                          <span>Kirim Tes</span>
-                        </button>
-
-                        <button 
-                          onClick={() => handleTogglePause(device)}
-                          disabled={pausingId === device.id}
-                          className={clsx(
-                            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold transition-all border cursor-pointer",
-                            device.isPaused
-                              ? "bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 shadow-xs"
-                              : "bg-white hover:bg-slate-100 text-slate-700 border-slate-200"
-                          )}
-                          title={device.isPaused ? "Lanjutkan nomor ini (ikut blast & auto-reply)" : "Jeda nomor ini (tidak ikut blast & auto-reply)"}
-                        >
-                          {pausingId === device.id ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : device.isPaused ? (
-                            <Play className="w-3 h-3 fill-amber-600 text-amber-600" />
-                          ) : (
-                            <Pause className="w-3 h-3 text-slate-600" />
-                          )}
-                          <span>{device.isPaused ? "Lanjutkan" : "Jeda"}</span>
-                        </button>
-                      </>
-                    ) : isAndroidAgent ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-500 rounded-md text-[11px] font-medium border border-slate-200">
-                        📱 Aktifkan di APK HP
-                      </span>
-                    ) : (
-                      <button 
-                        onClick={() => handleConnect(device)}
-                        disabled={isConnecting}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-[11px] font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
-                      >
-                        {isConnecting ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <QrCode className="w-3 h-3" />
-                        )}
-                        <span>{isQR ? 'Buka QR / Pairing' : isConnecting ? 'Menghubungkan...' : device.phoneNumber ? 'Hubungkan Ulang' : 'Hubungkan'}</span>
-                      </button>
-                    )}
-
-                    {isConnected && !isAndroidAgent && (
-                      <button 
-                        onClick={() => handleConnect(device)}
-                        className="p-1 text-slate-400 hover:text-slate-700 hover:bg-white rounded-md transition-colors border border-transparent hover:border-slate-200 cursor-pointer"
-                        title="Reconnect Session"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-
-                  <button 
-                    onClick={() => handleDeleteDevice(device)}
-                    className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
-                    title="Hapus Perangkat"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                <span className="text-xs font-medium text-slate-500">
+                  Setiap grup mewakili 1 HP fisik dengan multi-nomor WhatsApp
+                </span>
               </div>
-            );
-          })}
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {phoneGroups.map((group) => {
+                  const connectedCount = group.devices.filter(d => d.status === 'CONNECTED').length;
+                  const anyPaused = group.devices.some(d => d.isPaused);
+
+                  return (
+                    <div 
+                      key={group.phoneId}
+                      className="bg-white rounded-2xl border border-slate-200/90 shadow-xs hover:shadow-md transition-all overflow-hidden flex flex-col justify-between"
+                    >
+                      {/* Master Phone Card Header */}
+                      <div className="p-4 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center text-emerald-400">
+                            <Smartphone className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-base font-bold text-white tracking-tight">{group.phoneName}</h3>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+                                {connectedCount} / {group.devices.length} Akun Aktif
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-300 mt-0.5 flex items-center gap-2 font-mono">
+                              <span>{group.model}</span>
+                              <span className="text-slate-500">•</span>
+                              <span className="text-slate-400 text-[11px]">{group.phoneId}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {anyPaused && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
+                            Ada Akun Dijeda
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Account Slots inside this Physical Phone */}
+                      <div className="p-4 space-y-3 flex-1 bg-slate-50/50">
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                          <span>Akun WhatsApp di Ponsel Ini</span>
+                          <span>{group.devices.length} Slot Terkonfigurasi</span>
+                        </div>
+
+                        <div className="space-y-2.5">
+                          {group.devices.map((device) => {
+                            const isConnected = device.status === 'CONNECTED';
+                            let isBusiness = false;
+                            let slotName = 'Slot 1 (Utama)';
+                            try {
+                              const s = JSON.parse(device.sessionData || '{}');
+                              isBusiness = s.targetPackage === 'com.whatsapp.w4b' || s.accountType === 'BUSINESS';
+                              if (s.dualAppTarget === 'ACCOUNT_2' || s.slot?.includes('_2')) {
+                                slotName = 'Slot 2 (Dual App / Kloning)';
+                              } else if (s.slot?.includes('_1')) {
+                                slotName = 'Slot 1 (Utama)';
+                              }
+                            } catch (e) {
+                              isBusiness = device.name.toLowerCase().includes('business') || device.name.toLowerCase().includes('bisnis');
+                            }
+
+                            return (
+                              <div 
+                                key={device.id}
+                                className={clsx(
+                                  "bg-white rounded-xl border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all",
+                                  isConnected ? "border-slate-200/90 shadow-2xs hover:border-slate-300" : "border-slate-200/60 opacity-80"
+                                )}
+                              >
+                                <div className="flex items-start sm:items-center gap-3">
+                                  <div className={clsx(
+                                    "w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 mt-0.5 sm:mt-0",
+                                    isBusiness ? "bg-sky-50 text-sky-700 border border-sky-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                  )}>
+                                    {isBusiness ? '💼' : '🟢'}
+                                  </div>
+
+                                  <div>
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span className="text-xs font-bold text-slate-800">
+                                        {isBusiness ? 'WhatsApp Business' : 'WhatsApp Personal'}
+                                      </span>
+                                      <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-slate-100 text-slate-600 font-semibold border border-slate-200">
+                                        {slotName}
+                                      </span>
+                                      <span className={clsx(
+                                        "inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold uppercase",
+                                        device.isPaused ? "bg-amber-50 text-amber-700 border border-amber-200" :
+                                        isConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60" :
+                                        "bg-slate-100 text-slate-500 border border-slate-200"
+                                      )}>
+                                        <span className={clsx(
+                                          "w-1.5 h-1.5 rounded-full",
+                                          device.isPaused ? "bg-amber-500" :
+                                          isConnected ? "bg-emerald-500" : "bg-slate-400"
+                                        )}></span>
+                                        {device.isPaused ? 'DIJEDA' : device.status}
+                                      </span>
+                                    </div>
+
+                                    <div className="text-sm font-bold text-slate-900 font-mono mt-0.5">
+                                      {device.phoneNumber ? `+${device.phoneNumber}` : 'Nomor Belum Terdaftar'}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Slot Actions */}
+                                <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
+                                  {isConnected && (
+                                    <button 
+                                      onClick={() => {
+                                        setTestModalDevice(device);
+                                        setTestPhone('');
+                                        setTestSentStatus(null);
+                                      }}
+                                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer"
+                                      title={`Kirim Pesan Tes lewat +${device.phoneNumber}`}
+                                    >
+                                      <SendIcon className="w-3 h-3" />
+                                      <span>Kirim Tes</span>
+                                    </button>
+                                  )}
+
+                                  <button 
+                                    onClick={() => handleTogglePause(device)}
+                                    disabled={pausingId === device.id}
+                                    className={clsx(
+                                      "inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer",
+                                      device.isPaused
+                                        ? "bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300"
+                                        : "bg-white hover:bg-slate-100 text-slate-700 border-slate-200"
+                                    )}
+                                    title={device.isPaused ? "Lanjutkan nomor ini" : "Jeda nomor ini"}
+                                  >
+                                    {pausingId === device.id ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : device.isPaused ? (
+                                      <Play className="w-3 h-3 fill-amber-600 text-amber-600" />
+                                    ) : (
+                                      <Pause className="w-3 h-3 text-slate-600" />
+                                    )}
+                                    <span className="hidden sm:inline">{device.isPaused ? "Lanjut" : "Jeda"}</span>
+                                  </button>
+
+                                  <button 
+                                    onClick={() => {
+                                      setWebhookDevice(device);
+                                      setWebhookUrl(device.webhookUrl || '');
+                                      setWebhookTestResult(null);
+                                    }}
+                                    className={clsx(
+                                      "p-1.5 rounded-lg border transition-colors cursor-pointer",
+                                      device.webhookUrl 
+                                        ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100" 
+                                        : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                    )}
+                                    title="Atur Webhook"
+                                  >
+                                    <Globe className="w-3.5 h-3.5" />
+                                  </button>
+
+                                  <button 
+                                    onClick={() => handleDeleteDevice(device)}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Hapus Akun Ini"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* SECTION 2: Standalone WhatsApp Web Devices (Scan QR / Chromium) */}
+          {webDevices.length > 0 && (
+            <div className="space-y-4 pt-2">
+              <div className="flex items-center justify-between pb-1 border-b border-slate-200">
+                <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <QrCode className="w-4 h-4 text-emerald-600" />
+                  WhatsApp Web (Browser Scan QR Chromium)
+                </h2>
+                <span className="text-xs text-slate-500">
+                  {webDevices.length} Web Device Terdaftar
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {webDevices.map((device: any) => {
+                  const isConnected = device.status === 'CONNECTED';
+                  const isQR = device.status === 'QR_READY';
+                  const isConnecting = device.status === 'CONNECTING' || connectingId === device.id;
+
+                  return (
+                    <div 
+                      key={device.id} 
+                      className="bg-white rounded-xl border border-slate-200/80 shadow-xs hover:shadow-sm hover:border-slate-300 transition-all duration-150 flex flex-col justify-between overflow-hidden"
+                    >
+                      <div className="p-4">
+                        <div className="flex justify-between items-center mb-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-600">
+                            <Smartphone className="w-4 h-4 text-slate-700" />
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            {device.isPaused && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                DIJEDA
+                              </span>
+                            )}
+                            <span className={clsx(
+                              "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                              device.isPaused ? "bg-slate-100 text-slate-500 border border-slate-200" :
+                              isConnected ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60" :
+                              isQR ? "bg-blue-50 text-blue-700 border border-blue-200/60 animate-pulse" :
+                              isConnecting ? "bg-indigo-50 text-indigo-700 border border-indigo-200/60 animate-pulse" :
+                              "bg-slate-100 text-slate-600 border border-slate-200"
+                            )}>
+                              <span className={clsx(
+                                "w-1.5 h-1.5 rounded-full",
+                                device.isPaused ? "bg-amber-400" :
+                                isConnected ? "bg-emerald-500" :
+                                isQR ? "bg-blue-500" :
+                                isConnecting ? "bg-indigo-500" :
+                                "bg-slate-400"
+                              )}></span>
+                              {device.status}
+                            </span>
+                          </div>
+                        </div>
+
+                        <h3 className="text-sm font-bold text-slate-900 truncate" title={device.name}>
+                          {device.name}
+                        </h3>
+                        <div className="flex items-center gap-1.5 mt-0.5 mb-2.5 text-[11px] text-slate-500">
+                          <span>Nomor:</span>
+                          <span className="font-semibold text-slate-800 font-mono">
+                            {device.phoneNumber ? `+${device.phoneNumber}` : 'Belum Terhubung'}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap gap-1.5 pt-2 border-t border-slate-100">
+                          <button 
+                            onClick={() => {
+                              setWebhookDevice(device);
+                              setWebhookUrl(device.webhookUrl || '');
+                              setWebhookTestResult(null);
+                            }}
+                            className={clsx(
+                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors border cursor-pointer",
+                              device.webhookUrl 
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200/80 hover:bg-emerald-100" 
+                                : "bg-slate-50 text-slate-500 border-slate-200/60 hover:bg-slate-100"
+                            )}
+                          >
+                            <Globe className="w-3 h-3" />
+                            <span>{device.webhookUrl ? 'Webhook Aktif' : 'Atur Webhook'}</span>
+                          </button>
+
+                          {device.autoReply && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                              <Sparkles className="w-3 h-3 text-emerald-600" />
+                              <span>AI 9routes Active</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50/80 px-3.5 py-2 border-t border-slate-100 flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5">
+                          {isConnected ? (
+                            <>
+                              <button 
+                                onClick={() => {
+                                  setTestModalDevice(device);
+                                  setTestPhone('');
+                                  setTestSentStatus(null);
+                                }}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-md text-xs font-bold transition-all shadow-xs cursor-pointer"
+                              >
+                                <SendIcon className="w-3.5 h-3.5" />
+                                <span>Kirim Tes</span>
+                              </button>
+
+                              <button 
+                                onClick={() => handleTogglePause(device)}
+                                disabled={pausingId === device.id}
+                                className={clsx(
+                                  "inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold transition-all border cursor-pointer",
+                                  device.isPaused
+                                    ? "bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 shadow-xs"
+                                    : "bg-white hover:bg-slate-100 text-slate-700 border-slate-200"
+                                )}
+                                title={device.isPaused ? "Lanjutkan nomor ini" : "Jeda nomor ini"}
+                              >
+                                {pausingId === device.id ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : device.isPaused ? (
+                                  <Play className="w-3 h-3 fill-amber-600 text-amber-600" />
+                                ) : (
+                                  <Pause className="w-3 h-3 text-slate-600" />
+                                )}
+                                <span>{device.isPaused ? "Lanjutkan" : "Jeda"}</span>
+                              </button>
+                            </>
+                          ) : (
+                            <button 
+                              onClick={() => handleConnect(device)}
+                              disabled={isConnecting}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-[11px] font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                            >
+                              {isConnecting ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <QrCode className="w-3 h-3" />
+                              )}
+                              <span>{isQR ? 'Buka QR / Pairing' : isConnecting ? 'Menghubungkan...' : device.phoneNumber ? 'Hubungkan Ulang' : 'Hubungkan'}</span>
+                            </button>
+                          )}
+
+                          {isConnected && (
+                            <button 
+                              onClick={() => handleConnect(device)}
+                              className="p-1 text-slate-400 hover:text-slate-700 hover:bg-white rounded-md transition-colors border border-transparent hover:border-slate-200 cursor-pointer"
+                              title="Reconnect Session"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        <button 
+                          onClick={() => handleDeleteDevice(device)}
+                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
+                          title="Hapus Perangkat"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -926,7 +1152,14 @@ export default function Devices() {
                 />
               </div>
 
-              {testSentStatus && (
+              {sendingTest && (
+                <div className="p-3 rounded-xl text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                  <span>Mengirim pesan langsung ke WhatsApp ponsel...</span>
+                </div>
+              )}
+
+              {testSentStatus && !sendingTest && (
                 <div className={clsx(
                   "p-3 rounded-xl text-xs font-semibold",
                   testSentStatus.includes('berhasil') ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-rose-50 text-rose-700 border border-rose-200"

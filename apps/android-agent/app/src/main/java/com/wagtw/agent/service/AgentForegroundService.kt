@@ -151,7 +151,9 @@ class AgentForegroundService : Service() {
                 val serverUrl = prefs.serverUrl.trimEnd('/')
                 val ids = listOfNotNull(
                     prefs.businessDeviceId.ifEmpty { null },
+                    prefs.businessDeviceId2.ifEmpty { null },
                     prefs.personalDeviceId.ifEmpty { null },
+                    prefs.personalDeviceId2.ifEmpty { null },
                     prefs.deviceId.ifEmpty { null }
                 ).distinct()
 
@@ -194,11 +196,16 @@ class AgentForegroundService : Service() {
         try {
             val serverUrl = prefs.serverUrl.trimEnd('/')
             val json = JSONObject().apply {
+                put("phoneId", prefs.phoneId)
                 put("name", prefs.deviceName)
                 put("businessPhone", prefs.businessPhone)
                 put("enableBusiness", prefs.isBusinessEnabled)
+                put("businessPhone2", prefs.businessPhone2)
+                put("enableBusiness2", prefs.isBusiness2Enabled)
                 put("personalPhone", prefs.personalPhone)
                 put("enablePersonal", prefs.isPersonalEnabled)
+                put("personalPhone2", prefs.personalPhone2)
+                put("enablePersonal2", prefs.isPersonal2Enabled)
                 put("phone", prefs.businessPhone.ifEmpty { prefs.personalPhone })
                 put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
             }
@@ -213,16 +220,22 @@ class AgentForegroundService : Service() {
                 val str = res.body?.string() ?: ""
                 val resObj = JSONObject(str)
                 val bId = resObj.optString("businessDeviceId", "")
+                val b2Id = resObj.optString("businessDeviceId2", "")
                 val pId = resObj.optString("personalDeviceId", "")
+                val p2Id = resObj.optString("personalDeviceId2", "")
                 val mainId = resObj.optString("deviceId", "")
 
                 if (bId.isNotEmpty()) prefs.businessDeviceId = bId
+                if (b2Id.isNotEmpty()) prefs.businessDeviceId2 = b2Id
                 if (pId.isNotEmpty()) prefs.personalDeviceId = pId
+                if (p2Id.isNotEmpty()) prefs.personalDeviceId2 = p2Id
                 if (mainId.isNotEmpty()) prefs.deviceId = mainId
 
-                appendLog("✅ Terhubung ke Server WAGTW!")
-                if (bId.isNotEmpty()) appendLog("💼 WA Business ID: $bId")
-                if (pId.isNotEmpty()) appendLog("🟢 WA Personal ID: $pId")
+                appendLog("✅ Terhubung ke Server WAGTW (Grup: ${prefs.deviceName})!")
+                if (bId.isNotEmpty()) appendLog("💼 WA Bisnis (Slot 1): $bId")
+                if (b2Id.isNotEmpty()) appendLog("💼 WA Bisnis (Slot 2 Dual): $b2Id")
+                if (pId.isNotEmpty()) appendLog("🟢 WA Personal (Slot 1): $pId")
+                if (p2Id.isNotEmpty()) appendLog("🟢 WA Personal (Slot 2 Dual): $p2Id")
             }
         } catch (e: Exception) {
             appendLog("⚠️ Gagal mendaftarkan perangkat: ${e.message}")
@@ -232,12 +245,12 @@ class AgentForegroundService : Service() {
     private fun pollLoop() {
         while (isLoopRunning) {
             val serverUrl = prefs.serverUrl.trimEnd('/')
-            val activeIds = listOfNotNull(
-                if (prefs.isBusinessEnabled && prefs.businessDeviceId.isNotEmpty()) prefs.businessDeviceId else null,
-                if (prefs.isPersonalEnabled && prefs.personalDeviceId.isNotEmpty()) prefs.personalDeviceId else null
-            ).ifEmpty {
-                if (prefs.deviceId.isNotEmpty()) listOf(prefs.deviceId) else emptyList()
-            }
+            val activeIds = mutableListOf<String>()
+            if (prefs.isBusinessEnabled && prefs.businessDeviceId.isNotEmpty()) activeIds.add(prefs.businessDeviceId)
+            if (prefs.isBusiness2Enabled && prefs.businessDeviceId2.isNotEmpty()) activeIds.add(prefs.businessDeviceId2)
+            if (prefs.isPersonalEnabled && prefs.personalDeviceId.isNotEmpty()) activeIds.add(prefs.personalDeviceId)
+            if (prefs.isPersonal2Enabled && prefs.personalDeviceId2.isNotEmpty()) activeIds.add(prefs.personalDeviceId2)
+            if (activeIds.isEmpty() && prefs.deviceId.isNotEmpty()) activeIds.add(prefs.deviceId)
 
             if (activeIds.isNotEmpty()) {
                 val queryParam = activeIds.joinToString(",")
@@ -259,13 +272,19 @@ class AgentForegroundService : Service() {
                                     val msgId = msg.getString("id")
                                     val type = msg.optString("type", "MESSAGE")
                                     val msgDeviceId = msg.optString("deviceId", "")
-                                    val dualAppTarget = if (msg.has("dualAppTarget")) msg.getString("dualAppTarget") else null
-                                    val targetPkg = if (msgDeviceId == prefs.personalDeviceId) {
-                                        "com.whatsapp"
-                                    } else {
-                                        "com.whatsapp.w4b"
+                                    
+                                    val (targetPkg, autoDualAppTarget, label) = when (msgDeviceId) {
+                                        prefs.businessDeviceId2 -> Triple("com.whatsapp.w4b", "ACCOUNT_2", "WA Bisnis (Slot 2 Dual)")
+                                        prefs.businessDeviceId -> Triple("com.whatsapp.w4b", "ACCOUNT_1", "WA Bisnis (Slot 1)")
+                                        prefs.personalDeviceId2 -> Triple("com.whatsapp", "ACCOUNT_2", "WA Personal (Slot 2 Dual)")
+                                        prefs.personalDeviceId -> Triple("com.whatsapp", "ACCOUNT_1", "WA Personal (Slot 1)")
+                                        else -> Triple(
+                                            if (prefs.isBusinessEnabled) "com.whatsapp.w4b" else "com.whatsapp",
+                                            null,
+                                            "WhatsApp"
+                                        )
                                     }
-                                    val label = if (targetPkg == "com.whatsapp.w4b") "Business" else "Personal"
+                                    val dualAppTarget = if (msg.has("dualAppTarget")) msg.getString("dualAppTarget") else autoDualAppTarget
 
                                     if (type == "JOIN_GROUP") {
                                         val inviteUrl = msg.getString("inviteUrl")

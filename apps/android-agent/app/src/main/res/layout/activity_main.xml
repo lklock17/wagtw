@@ -366,7 +366,7 @@
                             android:id="@+id/tilBusinessPhone"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:hint="Nomor HP WhatsApp Business"
+                            android:hint="Nomor HP WhatsApp Business (Slot 1)"
                             app:boxCornerRadiusBottomEnd="12dp"
                             app:boxCornerRadiusBottomStart="12dp"
                             app:boxCornerRadiusTopEnd="12dp"
@@ -375,6 +375,55 @@
 
                             <com.google.android.material.textfield.TextInputEditText
                                 android:id="@+id/etBusinessPhone"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="phone"
+                                android:text=""
+                                android:textSize="14sp" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- Slot 2 (Dual App / Kloning) -->
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1dp"
+                            android:background="@color/border"
+                            android:layout_marginVertical="10dp" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginBottom="4dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Aktifkan Slot 2 (Dual App Bisnis)"
+                                android:textColor="@color/text_main"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
+
+                            <com.google.android.material.switchmaterial.SwitchMaterial
+                                android:id="@+id/cbEnableBusiness2"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:checked="false" />
+                        </LinearLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilBusinessPhone2"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Nomor HP WhatsApp Business (Slot 2 Dual)"
+                            app:boxCornerRadiusBottomEnd="12dp"
+                            app:boxCornerRadiusBottomStart="12dp"
+                            app:boxCornerRadiusTopEnd="12dp"
+                            app:boxCornerRadiusTopStart="12dp">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etBusinessPhone2"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:inputType="phone"
@@ -438,11 +487,12 @@
                                 android:checked="false" />
                         </LinearLayout>
 
+                        <!-- Slot 1 (Utama) -->
                         <com.google.android.material.textfield.TextInputLayout
                             android:id="@+id/tilPersonalPhone"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:hint="Nomor HP WhatsApp Personal"
+                            android:hint="Nomor HP WhatsApp Personal (Slot 1)"
                             app:boxCornerRadiusBottomEnd="12dp"
                             app:boxCornerRadiusBottomStart="12dp"
                             app:boxCornerRadiusTopEnd="12dp"
@@ -451,6 +501,55 @@
 
                             <com.google.android.material.textfield.TextInputEditText
                                 android:id="@+id/etPersonalPhone"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="phone"
+                                android:text=""
+                                android:textSize="14sp" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                        <!-- Slot 2 (Dual App / Kloning) -->
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1dp"
+                            android:background="@color/border"
+                            android:layout_marginVertical="10dp" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginBottom="4dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Aktifkan Slot 2 (Dual App Personal)"
+                                android:textColor="@color/text_main"
+                                android:textSize="13sp"
+                                android:textStyle="bold" />
+
+                            <com.google.android.material.switchmaterial.SwitchMaterial
+                                android:id="@+id/cbEnablePersonal2"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:checked="false" />
+                        </LinearLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:id="@+id/tilPersonalPhone2"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Nomor HP WhatsApp Personal (Slot 2 Dual)"
+                            app:boxCornerRadiusBottomEnd="12dp"
+                            app:boxCornerRadiusBottomStart="12dp"
+                            app:boxCornerRadiusTopEnd="12dp"
+                            app:boxCornerRadiusTopStart="12dp">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etPersonalPhone2"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:inputType="phone"

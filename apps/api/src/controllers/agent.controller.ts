@@ -11,6 +11,8 @@ export interface AgentQueueItem {
   to?: string;
   text?: string;
   inviteUrl?: string;
+  dualAppTarget?: string;
+  targetPackage?: string;
 }
 
 export interface GroupJoinTask {
@@ -116,16 +118,21 @@ export const executeWorkerGroupJoin = (deviceId: string, id: string, inviteUrl: 
   }, delayMs);
 };
 
-// 1. Register Android Agent device(s) - Supports Dual Numbers (Business & Personal)
+// 1. Register Android Agent device(s) - Supports Physical Phone Grouping & 4 Account Slots (Business 1 & 2 Dual, Personal 1 & 2 Dual)
 export const registerAgent = async (req: Request, res: Response) => {
   const { 
+    phoneId: clientPhoneId,
     name, 
     phone, 
     model,
     businessPhone,
+    businessPhone2,
     personalPhone,
+    personalPhone2,
     enableBusiness = true,
-    enablePersonal = false
+    enableBusiness2 = false,
+    enablePersonal = false,
+    enablePersonal2 = false
   } = req.body;
 
   try {
@@ -136,26 +143,45 @@ export const registerAgent = async (req: Request, res: Response) => {
       return c;
     };
 
-    const bPhone = cleanNumber(businessPhone) || (enableBusiness ? cleanNumber(phone) : null);
-    const pPhone = cleanNumber(personalPhone);
+    const phoneName = name || 'HP Agen';
+    const phoneModel = model || 'Android Phone';
+    const phoneId = clientPhoneId || `phone_${phoneName.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+
+    const bPhone1 = cleanNumber(businessPhone) || (enableBusiness ? cleanNumber(phone) : null);
+    const bPhone2 = cleanNumber(businessPhone2);
+    const pPhone1 = cleanNumber(personalPhone);
+    const pPhone2 = cleanNumber(personalPhone2);
 
     const registeredDevices: any[] = [];
-    let businessDeviceId: string | null = null;
-    let personalDeviceId: string | null = null;
 
-    // Register / Update Business Device (Card 1)
-    if (bPhone && enableBusiness) {
-      let bDevice = await prisma.device.findFirst({ where: { phoneNumber: bPhone } });
-      const devName = `${name || 'HP Agen'} (Business)`;
-      const sessionData = JSON.stringify({ 
-        type: 'ANDROID_AGENT', 
-        targetPackage: 'com.whatsapp.w4b', 
-        model: model || 'Android Phone' 
+    // Helper to register / upsert a slot device
+    const upsertSlot = async (
+      num: string | null, 
+      enabled: boolean, 
+      slot: 'BUSINESS_1' | 'BUSINESS_2' | 'PERSONAL_1' | 'PERSONAL_2',
+      label: string,
+      pkg: string,
+      dualApp: 'ACCOUNT_1' | 'ACCOUNT_2'
+    ) => {
+      if (!num || !enabled) return null;
+      
+      let dev = await prisma.device.findFirst({ where: { phoneNumber: num } });
+      const devName = `${phoneName} - ${label}`;
+      const sessionData = JSON.stringify({
+        type: 'ANDROID_AGENT',
+        phoneId,
+        phoneName,
+        model: phoneModel,
+        slot,
+        slotLabel: label,
+        accountType: slot.startsWith('BUSINESS') ? 'BUSINESS' : 'PERSONAL',
+        targetPackage: pkg,
+        dualAppTarget: dualApp
       });
 
-      if (bDevice) {
-        bDevice = await prisma.device.update({
-          where: { id: bDevice.id },
+      if (dev) {
+        dev = await prisma.device.update({
+          where: { id: dev.id },
           data: {
             name: devName,
             status: 'CONNECTED',
@@ -164,66 +190,39 @@ export const registerAgent = async (req: Request, res: Response) => {
           }
         });
       } else {
-        bDevice = await prisma.device.create({
+        dev = await prisma.device.create({
           data: {
             name: devName,
-            phoneNumber: bPhone,
+            phoneNumber: num,
             status: 'CONNECTED',
             lastConnected: new Date(),
             sessionData
           }
         });
       }
-      businessDeviceId = bDevice.id;
-      registeredDevices.push(bDevice);
-    }
+      registeredDevices.push(dev);
+      return dev;
+    };
 
-    // Register / Update Personal Device (Card 2)
-    if (pPhone && enablePersonal) {
-      let pDevice = await prisma.device.findFirst({ where: { phoneNumber: pPhone } });
-      const devName = `${name || 'HP Agen'} (Personal)`;
-      const sessionData = JSON.stringify({ 
-        type: 'ANDROID_AGENT', 
-        targetPackage: 'com.whatsapp', 
-        model: model || 'Android Phone' 
-      });
-
-      if (pDevice) {
-        pDevice = await prisma.device.update({
-          where: { id: pDevice.id },
-          data: {
-            name: devName,
-            status: 'CONNECTED',
-            lastConnected: new Date(),
-            sessionData
-          }
-        });
-      } else {
-        pDevice = await prisma.device.create({
-          data: {
-            name: devName,
-            phoneNumber: pPhone,
-            status: 'CONNECTED',
-            lastConnected: new Date(),
-            sessionData
-          }
-        });
-      }
-      personalDeviceId = pDevice.id;
-      registeredDevices.push(pDevice);
-    }
+    const bDev1 = await upsertSlot(bPhone1, enableBusiness, 'BUSINESS_1', 'Bisnis (Slot 1)', 'com.whatsapp.w4b', 'ACCOUNT_1');
+    const bDev2 = await upsertSlot(bPhone2, enableBusiness2, 'BUSINESS_2', 'Bisnis Dual (Slot 2)', 'com.whatsapp.w4b', 'ACCOUNT_2');
+    const pDev1 = await upsertSlot(pPhone1, enablePersonal, 'PERSONAL_1', 'Personal (Slot 1)', 'com.whatsapp', 'ACCOUNT_1');
+    const pDev2 = await upsertSlot(pPhone2, enablePersonal2, 'PERSONAL_2', 'Personal Dual (Slot 2)', 'com.whatsapp', 'ACCOUNT_2');
 
     res.json({
       success: true,
-      deviceId: businessDeviceId || personalDeviceId || (registeredDevices[0]?.id),
-      businessDeviceId,
-      personalDeviceId,
+      phoneId,
+      businessDeviceId: bDev1?.id || null,
+      businessDeviceId2: bDev2?.id || null,
+      personalDeviceId: pDev1?.id || null,
+      personalDeviceId2: pDev2?.id || null,
+      deviceId: bDev1?.id || pDev1?.id || bDev2?.id || pDev2?.id || (registeredDevices[0]?.id) || null,
       devices: registeredDevices.map(d => ({
         id: d.id,
         name: d.name,
         phone: d.phoneNumber
       })),
-      message: `Berhasil mendaftarkan ${registeredDevices.length} perangkat WhatsApp!`
+      message: `Berhasil mendaftarkan grup ${phoneName} dengan ${registeredDevices.length} akun WhatsApp aktif!`
     });
   } catch (error: any) {
     console.error('Failed to register agent device:', error.message);
@@ -326,6 +325,7 @@ export const getPendingMessages = async (req: Request, res: Response) => {
   const { deviceId } = req.params;
   const ids = deviceId.split(',').map(s => s.trim()).filter(Boolean);
 
+  const devMap = new Map<string, any>();
   if (ids.length > 0) {
     try {
       await prisma.device.updateMany({
@@ -335,6 +335,16 @@ export const getPendingMessages = async (req: Request, res: Response) => {
         },
         data: { status: 'CONNECTED', lastConnected: new Date() }
       });
+
+      const devices = await prisma.device.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, sessionData: true }
+      });
+      devices.forEach(d => {
+        try {
+          if (d.sessionData) devMap.set(d.id, JSON.parse(d.sessionData));
+        } catch (e) {}
+      });
     } catch (e) {}
   }
 
@@ -342,7 +352,13 @@ export const getPendingMessages = async (req: Request, res: Response) => {
   for (const id of ids) {
     const queue = pendingAgentMessages.get(id) || [];
     if (queue.length > 0) {
-      allMessages.push(...queue.map(m => ({ ...m, deviceId: id })));
+      const devInfo = devMap.get(id);
+      allMessages.push(...queue.map(m => ({ 
+        ...m, 
+        deviceId: id,
+        dualAppTarget: m.dualAppTarget || devInfo?.dualAppTarget,
+        targetPackage: m.targetPackage || devInfo?.targetPackage
+      })));
       pendingAgentMessages.set(id, []);
     }
   }

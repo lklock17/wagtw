@@ -49,8 +49,12 @@ class MainActivity : AppCompatActivity() {
     // Accounts Views
     private lateinit var cbEnableBusiness: SwitchMaterial
     private lateinit var etBusinessPhone: EditText
+    private lateinit var cbEnableBusiness2: SwitchMaterial
+    private lateinit var etBusinessPhone2: EditText
     private lateinit var cbEnablePersonal: SwitchMaterial
     private lateinit var etPersonalPhone: EditText
+    private lateinit var cbEnablePersonal2: SwitchMaterial
+    private lateinit var etPersonalPhone2: EditText
     private lateinit var rgDualAppMode: RadioGroup
     private lateinit var rbDualAppOff: RadioButton
     private lateinit var rbDualAppAcc1: RadioButton
@@ -110,8 +114,12 @@ class MainActivity : AppCompatActivity() {
         // Accounts Tab
         cbEnableBusiness = findViewById(R.id.cbEnableBusiness)
         etBusinessPhone = findViewById(R.id.etBusinessPhone)
+        cbEnableBusiness2 = findViewById(R.id.cbEnableBusiness2)
+        etBusinessPhone2 = findViewById(R.id.etBusinessPhone2)
         cbEnablePersonal = findViewById(R.id.cbEnablePersonal)
         etPersonalPhone = findViewById(R.id.etPersonalPhone)
+        cbEnablePersonal2 = findViewById(R.id.cbEnablePersonal2)
+        etPersonalPhone2 = findViewById(R.id.etPersonalPhone2)
         rgDualAppMode = findViewById(R.id.rgDualAppMode)
         rbDualAppOff = findViewById(R.id.rbDualAppOff)
         rbDualAppAcc1 = findViewById(R.id.rbDualAppAcc1)
@@ -158,11 +166,17 @@ class MainActivity : AppCompatActivity() {
         etDeviceName.setText(prefs.deviceName)
         tvDeviceHeaderName.text = prefs.deviceName
 
+        // Business
         etBusinessPhone.setText(prefs.businessPhone)
         cbEnableBusiness.isChecked = prefs.isBusinessEnabled
+        etBusinessPhone2.setText(prefs.businessPhone2)
+        cbEnableBusiness2.isChecked = prefs.isBusiness2Enabled
 
+        // Personal
         etPersonalPhone.setText(prefs.personalPhone)
         cbEnablePersonal.isChecked = prefs.isPersonalEnabled
+        etPersonalPhone2.setText(prefs.personalPhone2)
+        cbEnablePersonal2.isChecked = prefs.isPersonal2Enabled
 
         when (prefs.dualAppMode) {
             "ACCOUNT_1" -> rbDualAppAcc1.isChecked = true
@@ -178,19 +192,21 @@ class MainActivity : AppCompatActivity() {
     private fun updateBadges() {
         tvDeviceHeaderName.text = prefs.deviceName
 
-        badgeBusinessStatus.text = if (prefs.isBusinessEnabled) "💼 Business: ON" else "💼 Business: OFF"
+        val businessCount = (if (prefs.isBusinessEnabled) 1 else 0) + (if (prefs.isBusiness2Enabled) 1 else 0)
+        badgeBusinessStatus.text = if (businessCount > 0) "💼 Bisnis: $businessCount Akun" else "💼 Bisnis: OFF"
         badgeBusinessStatus.setTextColor(
-            ContextCompat.getColor(this, if (prefs.isBusinessEnabled) R.color.primary else R.color.text_muted)
+            ContextCompat.getColor(this, if (businessCount > 0) R.color.primary else R.color.text_muted)
         )
 
-        badgePersonalStatus.text = if (prefs.isPersonalEnabled) "🟢 Personal: ON" else "🟢 Personal: OFF"
+        val personalCount = (if (prefs.isPersonalEnabled) 1 else 0) + (if (prefs.isPersonal2Enabled) 1 else 0)
+        badgePersonalStatus.text = if (personalCount > 0) "🟢 Personal: $personalCount Akun" else "🟢 Personal: OFF"
         badgePersonalStatus.setTextColor(
-            ContextCompat.getColor(this, if (prefs.isPersonalEnabled) R.color.primary else R.color.text_muted)
+            ContextCompat.getColor(this, if (personalCount > 0) R.color.primary else R.color.text_muted)
         )
 
         val dualLabel = when (prefs.dualAppMode) {
-            "ACCOUNT_1" -> "Akun 1"
-            "ACCOUNT_2" -> "Akun 2"
+            "ACCOUNT_1" -> "Slot 1"
+            "ACCOUNT_2" -> "Slot 2 (Dual)"
             "RANDOM", "ALTERNATING" -> "Acak"
             else -> "OFF"
         }
@@ -203,8 +219,13 @@ class MainActivity : AppCompatActivity() {
     private fun saveAccountSettings() {
         prefs.businessPhone = etBusinessPhone.text.toString().trim()
         prefs.isBusinessEnabled = cbEnableBusiness.isChecked
+        prefs.businessPhone2 = etBusinessPhone2.text.toString().trim()
+        prefs.isBusiness2Enabled = cbEnableBusiness2.isChecked
+
         prefs.personalPhone = etPersonalPhone.text.toString().trim()
         prefs.isPersonalEnabled = cbEnablePersonal.isChecked
+        prefs.personalPhone2 = etPersonalPhone2.text.toString().trim()
+        prefs.isPersonal2Enabled = cbEnablePersonal2.isChecked
 
         prefs.dualAppMode = when {
             rbDualAppAcc1.isChecked -> "ACCOUNT_1"
