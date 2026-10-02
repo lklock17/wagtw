@@ -85,6 +85,44 @@ class WhatsAppAccessibilityService : AccessibilityService() {
             return
         }
 
+        // 0.1 AUTO-CONFIRM "Lanjutkan obrolan" / "Continue chat" (Trust this business safety bottom sheet)
+        val hasTrustDialog = rootNode.findAccessibilityNodeInfosByText("Apakah Anda percaya bisnis ini").isNotEmpty() ||
+                             rootNode.findAccessibilityNodeInfosByText("Do you trust this business").isNotEmpty() ||
+                             rootNode.findAccessibilityNodeInfosByText("Batalkan obrolan").isNotEmpty() ||
+                             rootNode.findAccessibilityNodeInfosByText("Cancel chat").isNotEmpty()
+
+        val continueButtons = mutableListOf<AccessibilityNodeInfo>()
+        continueButtons.addAll(rootNode.findAccessibilityNodeInfosByText("Lanjutkan obrolan"))
+        continueButtons.addAll(rootNode.findAccessibilityNodeInfosByText("Continue chat"))
+        continueButtons.addAll(rootNode.findAccessibilityNodeInfosByText("Lanjutkan ke obrolan"))
+        continueButtons.addAll(rootNode.findAccessibilityNodeInfosByText("Lanjutkan ke chat"))
+        if (hasTrustDialog && continueButtons.isEmpty()) {
+            continueButtons.addAll(rootNode.findAccessibilityNodeInfosByText("Lanjutkan"))
+            continueButtons.addAll(rootNode.findAccessibilityNodeInfosByText("Continue"))
+        }
+
+        for (btn in continueButtons) {
+            var curr: AccessibilityNodeInfo? = btn
+            var clicked = false
+            var depth = 0
+            while (curr != null && depth < 4) {
+                if (curr.isClickable) {
+                    clicked = curr.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    if (clicked) break
+                }
+                curr = curr.parent
+                depth++
+            }
+
+            if (clicked) {
+                Log.d("WAGTW_ACCESSIBILITY", "Clicked 'Lanjutkan obrolan' (Trust business prompt)")
+                AgentForegroundService.appendLog("🛡️ Mengonfirmasi 'Lanjutkan obrolan' (Dialog keamanan WhatsApp)...")
+                // Reset watchdog timer with fresh 6 seconds for chat screen to load
+                startSendWatchdog(lastSentMessageId ?: "retry", forcedDualAppAccount)
+                return
+            }
+        }
+
         // 1. DETECT WHATSAPP ERROR DIALOGS, LOGGED OUT SCREEN, & SUSPEND / BANNED
         val errorKeywords = listOf(
             // Welcome / Logged out / Reset Screen (from fresh install, reset, or ban logout)
