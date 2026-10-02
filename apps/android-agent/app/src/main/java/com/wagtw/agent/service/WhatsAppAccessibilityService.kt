@@ -35,11 +35,12 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                     lastSentMessageId = null
                     forcedDualAppAccount = null
 
-                    AgentForegroundService.appendLog("⚠️ Gagal: Timeout tombol kirim WhatsApp (14 detik)")
+                    AgentForegroundService.appendLog("⚠️ Gagal: Timeout respon WhatsApp (6 detik)")
                     if (currentMsgId != null) {
                         AgentForegroundService.notifyMessageFailed(
                             currentMsgId,
-                            "Timeout: WhatsApp tidak merespons atau tombol kirim tidak muncul (14 detik)"
+                            "Timeout: WhatsApp tidak merespons atau tombol kirim tidak muncul (6 detik)",
+                            "TIMEOUT"
                         )
                     }
 
@@ -47,7 +48,7 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                     instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                 }
             }
-            watchdogHandler.postDelayed(watchdogRunnable!!, 14000)
+            watchdogHandler.postDelayed(watchdogRunnable!!, 6000)
         }
 
         fun cancelWatchdog() {
@@ -84,33 +85,55 @@ class WhatsAppAccessibilityService : AccessibilityService() {
             return
         }
 
-        // 1. DETECT WHATSAPP ERROR DIALOGS & BOTTOM SHEETS
+        // 1. DETECT WHATSAPP ERROR DIALOGS & SUSPEND / BANNED
         val errorKeywords = listOf(
             "Kirim undangan melalui SMS",
             "tidak terdaftar di WhatsApp",
-            "tidak bisa memulai obrolan baru",
-            "tidak bisa memulai chat baru",
-            "Akun Anda dibatasi",
             "isn't on WhatsApp",
             "not on WhatsApp",
             "tidak valid",
             "invalid phone",
+            "tidak bisa memulai obrolan baru",
+            "tidak bisa memulai chat baru",
+            "Akun Anda dibatasi",
             "tidak diizinkan menggunakan WhatsApp",
-            "This account is not allowed"
+            "This account is not allowed",
+            "telah diblokir",
+            "has been banned",
+            "is banned",
+            "telah dinonaktifkan",
+            "tidak dapat lagi menggunakan",
+            "can no longer use",
+            "Daftarkan nomor telepon",
+            "Verifikasi nomor Anda",
+            "Enter your phone number",
+            "spam"
         )
 
         var detectedError: String? = null
+        var isSuspended = false
+
         for (err in errorKeywords) {
             val found = rootNode.findAccessibilityNodeInfosByText(err)
             if (found.isNotEmpty()) {
-                detectedError = when {
-                    err.contains("terdaftar", true) || err.contains("undangan", true) || err.contains("on WhatsApp", true) ->
-                        "Nomor tujuan tidak terdaftar di WhatsApp"
-                    err.contains("chat baru", true) || err.contains("obrolan baru", true) || err.contains("dibatasi", true) ->
-                        "Akun Anda dibatasi oleh WhatsApp (tidak bisa memulai chat/obrolan baru)"
-                    err.contains("tidak diizinkan", true) || err.contains("not allowed", true) ->
-                        "Akun WhatsApp ditangguhkan / banned"
-                    else -> "Nomor telepon tidak valid di WhatsApp"
+                when {
+                    err.contains("terdaftar", true) || err.contains("undangan", true) || err.contains("on WhatsApp", true) || err.contains("valid", true) -> {
+                        detectedError = "Nomor tujuan tidak terdaftar di WhatsApp"
+                    }
+                    err.contains("chat baru", true) || err.contains("obrolan baru", true) || err.contains("dibatasi", true) -> {
+                        detectedError = "Akun Anda dibatasi oleh WhatsApp (Limit chat baru)"
+                    }
+                    err.contains("tidak diizinkan", true) || err.contains("not allowed", true) ||
+                    err.contains("diblokir", true) || err.contains("banned", true) ||
+                    err.contains("dinonaktifkan", true) || err.contains("tidak dapat lagi", true) ||
+                    err.contains("Daftarkan nomor", true) || err.contains("Verifikasi nomor", true) ||
+                    err.contains("Enter your phone", true) || err.contains("spam", true) -> {
+                        detectedError = "Akun WhatsApp ditangguhkan / banned / logout"
+                        isSuspended = true
+                    }
+                    else -> {
+                        detectedError = "Nomor telepon tidak valid di WhatsApp"
+                    }
                 }
                 break
             }
@@ -123,9 +146,22 @@ class WhatsAppAccessibilityService : AccessibilityService() {
             val msgId = lastSentMessageId
             lastSentMessageId = null
 
+            // If account is suspended and Dual App is active, auto-lock to Account 1
+            if (isSuspended) {
+                val prefs = PrefsManager(applicationContext)
+                if (prefs.dualAppMode != "OFF") {
+                    prefs.dualAppMode = "ACCOUNT_1"
+                    AgentForegroundService.appendLog("⚠️ Terdeteksi akun terblokir pada Dual App! Mengunci otomatis ke Akun 1.")
+                }
+            }
+
             AgentForegroundService.appendLog("❌ Gagal: $detectedError")
             if (msgId != null) {
-                AgentForegroundService.notifyMessageFailed(msgId, detectedError)
+                AgentForegroundService.notifyMessageFailed(
+                    msgId, 
+                    detectedError, 
+                    if (isSuspended) "SUSPENDED" else null
+                )
             }
 
             // Dismiss dialog / bottom sheet: look for "Nanti", "Not now", "OK", "BATAL", "Batal"
@@ -150,7 +186,7 @@ class WhatsAppAccessibilityService : AccessibilityService() {
             // Return to previous screen
             Handler(Looper.getMainLooper()).postDelayed({
                 performGlobalAction(GLOBAL_ACTION_BACK)
-            }, 800)
+            }, 600)
             return
         }
 
@@ -264,15 +300,28 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                     val msgId = lastSentMessageId
                     lastSentMessageId = null
 
-                    AgentForegroundService.appendLog("🚀 Pesan terkirim otomatis di WhatsApp!")
-                    if (msgId != null) {
-                        AgentForegroundService.notifyMessageSent(msgId)
-                    }
-
-                    // Return to previous screen after brief pause
+                    // Give a brief moment to check if chat bubble showed failure icon
                     Handler(Looper.getMainLooper()).postDelayed({
+                        val currentWindow = rootInActiveWindow
+                        val hasSendError = currentWindow?.findAccessibilityNodeInfosByText("Pesan tidak terkirim")?.isNotEmpty() == true ||
+                                          currentWindow?.findAccessibilityNodeInfosByText("Not delivered")?.isNotEmpty() == true ||
+                                          currentWindow?.findAccessibilityNodeInfosByText("Ketuk untuk mencoba lagi")?.isNotEmpty() == true
+
+                        if (hasSendError) {
+                            AgentForegroundService.appendLog("⚠️ Gagal: Pesan tertahan / tidak terkirim di WhatsApp")
+                            if (msgId != null) {
+                                AgentForegroundService.notifyMessageFailed(msgId, "Pesan tidak terkirim di WhatsApp (jaringan atau dibatasi)")
+                            }
+                        } else {
+                            AgentForegroundService.appendLog("🚀 Pesan terkirim otomatis di WhatsApp!")
+                            if (msgId != null) {
+                                AgentForegroundService.notifyMessageSent(msgId)
+                            }
+                        }
+
+                        // Return to previous screen
                         performGlobalAction(GLOBAL_ACTION_BACK)
-                    }, 1200)
+                    }, 1000)
 
                     break
                 }

@@ -52,8 +52,8 @@ class AgentForegroundService : Service() {
             instance?.reportMessageStatus(messageId, "SENT")
         }
 
-        fun notifyMessageFailed(messageId: String, error: String) {
-            instance?.reportMessageStatus(messageId, "FAILED", error)
+        fun notifyMessageFailed(messageId: String, error: String, deviceStatus: String? = null) {
+            instance?.reportMessageStatus(messageId, "FAILED", error, deviceStatus)
         }
 
         fun sendDirectTest(context: Context, to: String, text: String, forcedPkg: String? = null, dualAppTarget: String? = null) {
@@ -304,7 +304,7 @@ class AgentForegroundService : Service() {
         }
     }
 
-    fun reportMessageStatus(messageId: String, status: String, error: String? = null) {
+    fun reportMessageStatus(messageId: String, status: String, error: String? = null, deviceStatus: String? = null) {
         Thread {
             try {
                 val serverUrl = prefs.serverUrl.trimEnd('/')
@@ -312,6 +312,7 @@ class AgentForegroundService : Service() {
                     put("messageId", messageId)
                     put("status", status)
                     if (error != null) put("error", error)
+                    if (deviceStatus != null) put("deviceStatus", deviceStatus)
                 }
 
                 val body = json.toString().toRequestBody("application/json".toMediaType())

@@ -7,16 +7,20 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.View
 import android.widget.Button
-import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.RadioButton
 import android.widget.RadioGroup
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.tabs.TabLayout
 import com.wagtw.agent.service.AgentForegroundService
 import com.wagtw.agent.service.WhatsAppAccessibilityService
 import com.wagtw.agent.util.PrefsManager
@@ -24,31 +28,48 @@ import com.wagtw.agent.util.PrefsManager
 class MainActivity : AppCompatActivity() {
 
     private lateinit var prefs: PrefsManager
-    private lateinit var etServerUrl: EditText
-    private lateinit var etDeviceName: EditText
-    private lateinit var cbEnableBusiness: CheckBox
-    private lateinit var etBusinessPhone: EditText
-    private lateinit var cbEnablePersonal: CheckBox
-    private lateinit var etPersonalPhone: EditText
 
+    // Tabs & Containers
+    private lateinit var tabLayout: TabLayout
+    private lateinit var layoutTabDashboard: View
+    private lateinit var layoutTabAccounts: View
+    private lateinit var layoutTabSettings: View
+
+    // Dashboard Views
+    private lateinit var tvStatusBadge: TextView
+    private lateinit var tvDeviceHeaderName: TextView
+    private lateinit var badgeBusinessStatus: TextView
+    private lateinit var badgePersonalStatus: TextView
+    private lateinit var badgeDualStatus: TextView
+    private lateinit var btnToggleConnect: MaterialButton
+    private lateinit var btnClearLogs: MaterialButton
+    private lateinit var tvLogs: TextView
+    private lateinit var scrollLogs: ScrollView
+
+    // Accounts Views
+    private lateinit var cbEnableBusiness: SwitchMaterial
+    private lateinit var etBusinessPhone: EditText
+    private lateinit var cbEnablePersonal: SwitchMaterial
+    private lateinit var etPersonalPhone: EditText
     private lateinit var rgDualAppMode: RadioGroup
     private lateinit var rbDualAppOff: RadioButton
     private lateinit var rbDualAppAcc1: RadioButton
     private lateinit var rbDualAppAcc2: RadioButton
     private lateinit var rbDualAppRandom: RadioButton
+    private lateinit var btnSaveAccounts: MaterialButton
 
+    // Settings & Diagnostics Views
+    private lateinit var etServerUrl: EditText
+    private lateinit var etDeviceName: EditText
+    private lateinit var btnSaveServer: MaterialButton
+    private lateinit var btnPermissionNotif: MaterialButton
+    private lateinit var btnPermissionAccessibility: MaterialButton
+    private lateinit var btnPermissionBattery: MaterialButton
     private lateinit var rgTestWhatsAppType: RadioGroup
     private lateinit var rbTestBusiness: RadioButton
     private lateinit var rbTestPersonal: RadioButton
     private lateinit var etTestPhone: EditText
-    private lateinit var btnQuickTestSend: Button
-
-    private lateinit var tvStatusBadge: TextView
-    private lateinit var btnToggleConnect: Button
-    private lateinit var btnPermissionNotif: Button
-    private lateinit var btnPermissionAccessibility: Button
-    private lateinit var btnPermissionBattery: Button
-    private lateinit var tvLogs: TextView
+    private lateinit var btnQuickTestSend: MaterialButton
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,6 +78,7 @@ class MainActivity : AppCompatActivity() {
         prefs = PrefsManager(this)
 
         initViews()
+        setupTabs()
         loadSavedConfig()
         checkPermissions()
         setupListeners()
@@ -65,41 +87,80 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         checkPermissions()
+        updateBadges()
     }
 
     private fun initViews() {
-        etServerUrl = findViewById(R.id.etServerUrl)
-        etDeviceName = findViewById(R.id.etDeviceName)
+        tabLayout = findViewById(R.id.tabLayout)
+        layoutTabDashboard = findViewById(R.id.layoutTabDashboard)
+        layoutTabAccounts = findViewById(R.id.layoutTabAccounts)
+        layoutTabSettings = findViewById(R.id.layoutTabSettings)
+
+        // Header & Dashboard
+        tvStatusBadge = findViewById(R.id.tvStatusBadge)
+        tvDeviceHeaderName = findViewById(R.id.tvDeviceHeaderName)
+        badgeBusinessStatus = findViewById(R.id.badgeBusinessStatus)
+        badgePersonalStatus = findViewById(R.id.badgePersonalStatus)
+        badgeDualStatus = findViewById(R.id.badgeDualStatus)
+        btnToggleConnect = findViewById(R.id.btnToggleConnect)
+        btnClearLogs = findViewById(R.id.btnClearLogs)
+        tvLogs = findViewById(R.id.tvLogs)
+        scrollLogs = findViewById(R.id.scrollLogs)
+
+        // Accounts Tab
         cbEnableBusiness = findViewById(R.id.cbEnableBusiness)
         etBusinessPhone = findViewById(R.id.etBusinessPhone)
         cbEnablePersonal = findViewById(R.id.cbEnablePersonal)
         etPersonalPhone = findViewById(R.id.etPersonalPhone)
-
         rgDualAppMode = findViewById(R.id.rgDualAppMode)
         rbDualAppOff = findViewById(R.id.rbDualAppOff)
         rbDualAppAcc1 = findViewById(R.id.rbDualAppAcc1)
         rbDualAppAcc2 = findViewById(R.id.rbDualAppAcc2)
         rbDualAppRandom = findViewById(R.id.rbDualAppRandom)
+        btnSaveAccounts = findViewById(R.id.btnSaveAccounts)
 
+        // Settings Tab
+        etServerUrl = findViewById(R.id.etServerUrl)
+        etDeviceName = findViewById(R.id.etDeviceName)
+        btnSaveServer = findViewById(R.id.btnSaveServer)
+        btnPermissionNotif = findViewById(R.id.btnPermissionNotif)
+        btnPermissionAccessibility = findViewById(R.id.btnPermissionAccessibility)
+        btnPermissionBattery = findViewById(R.id.btnPermissionBattery)
         rgTestWhatsAppType = findViewById(R.id.rgTestWhatsAppType)
         rbTestBusiness = findViewById(R.id.rbTestBusiness)
         rbTestPersonal = findViewById(R.id.rbTestPersonal)
         etTestPhone = findViewById(R.id.etTestPhone)
         btnQuickTestSend = findViewById(R.id.btnQuickTestSend)
+    }
 
-        tvStatusBadge = findViewById(R.id.tvStatusBadge)
-        btnToggleConnect = findViewById(R.id.btnToggleConnect)
-        btnPermissionNotif = findViewById(R.id.btnPermissionNotif)
-        btnPermissionAccessibility = findViewById(R.id.btnPermissionAccessibility)
-        btnPermissionBattery = findViewById(R.id.btnPermissionBattery)
-        tvLogs = findViewById(R.id.tvLogs)
+    private fun setupTabs() {
+        tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab?) {
+                when (tab?.position) {
+                    0 -> switchTab(layoutTabDashboard)
+                    1 -> switchTab(layoutTabAccounts)
+                    2 -> switchTab(layoutTabSettings)
+                }
+            }
+            override fun onTabUnselected(tab: TabLayout.Tab?) {}
+            override fun onTabReselected(tab: TabLayout.Tab?) {}
+        })
+    }
+
+    private fun switchTab(targetView: View) {
+        layoutTabDashboard.visibility = if (targetView == layoutTabDashboard) View.VISIBLE else View.GONE
+        layoutTabAccounts.visibility = if (targetView == layoutTabAccounts) View.VISIBLE else View.GONE
+        layoutTabSettings.visibility = if (targetView == layoutTabSettings) View.VISIBLE else View.GONE
     }
 
     private fun loadSavedConfig() {
         etServerUrl.setText(prefs.serverUrl)
         etDeviceName.setText(prefs.deviceName)
+        tvDeviceHeaderName.text = prefs.deviceName
+
         etBusinessPhone.setText(prefs.businessPhone)
         cbEnableBusiness.isChecked = prefs.isBusinessEnabled
+
         etPersonalPhone.setText(prefs.personalPhone)
         cbEnablePersonal.isChecked = prefs.isPersonalEnabled
 
@@ -111,11 +172,35 @@ class MainActivity : AppCompatActivity() {
         }
 
         updateStatus(prefs.isServiceRunning)
+        updateBadges()
     }
 
-    private fun saveConfig() {
-        prefs.serverUrl = etServerUrl.text.toString().trim()
-        prefs.deviceName = etDeviceName.text.toString().trim()
+    private fun updateBadges() {
+        tvDeviceHeaderName.text = prefs.deviceName
+
+        badgeBusinessStatus.text = if (prefs.isBusinessEnabled) "💼 Business: ON" else "💼 Business: OFF"
+        badgeBusinessStatus.setTextColor(
+            ContextCompat.getColor(this, if (prefs.isBusinessEnabled) R.color.primary else R.color.text_muted)
+        )
+
+        badgePersonalStatus.text = if (prefs.isPersonalEnabled) "🟢 Personal: ON" else "🟢 Personal: OFF"
+        badgePersonalStatus.setTextColor(
+            ContextCompat.getColor(this, if (prefs.isPersonalEnabled) R.color.primary else R.color.text_muted)
+        )
+
+        val dualLabel = when (prefs.dualAppMode) {
+            "ACCOUNT_1" -> "Akun 1"
+            "ACCOUNT_2" -> "Akun 2"
+            "RANDOM", "ALTERNATING" -> "Acak"
+            else -> "OFF"
+        }
+        badgeDualStatus.text = "♊ Dual: $dualLabel"
+        badgeDualStatus.setTextColor(
+            ContextCompat.getColor(this, if (prefs.dualAppMode != "OFF") R.color.primary else R.color.text_muted)
+        )
+    }
+
+    private fun saveAccountSettings() {
         prefs.businessPhone = etBusinessPhone.text.toString().trim()
         prefs.isBusinessEnabled = cbEnableBusiness.isChecked
         prefs.personalPhone = etPersonalPhone.text.toString().trim()
@@ -127,21 +212,41 @@ class MainActivity : AppCompatActivity() {
             rbDualAppRandom.isChecked -> "RANDOM"
             else -> "OFF"
         }
+
+        updateBadges()
+        Toast.makeText(this, "✅ Pengaturan Akun Berhasil Disimpan!", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun saveServerSettings() {
+        prefs.serverUrl = etServerUrl.text.toString().trim()
+        prefs.deviceName = etDeviceName.text.toString().trim()
+        updateBadges()
+        Toast.makeText(this, "✅ Konfigurasi Server Berhasil Disimpan!", Toast.LENGTH_SHORT).show()
     }
 
     private fun setupListeners() {
-        rgDualAppMode.setOnCheckedChangeListener { _, _ ->
-            saveConfig()
+        btnSaveAccounts.setOnClickListener {
+            saveAccountSettings()
         }
+
+        btnSaveServer.setOnClickListener {
+            saveServerSettings()
+        }
+
+        btnClearLogs.setOnClickListener {
+            tvLogs.text = "[Sistem] Log dibersihkan.\n"
+        }
+
         btnQuickTestSend.setOnClickListener {
             val phone = etTestPhone.text.toString().trim()
             if (phone.isEmpty()) {
                 Toast.makeText(this, "Masukkan nomor HP tujuan terlebih dahulu", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            saveConfig()
+            saveAccountSettings()
             val targetPkg = if (rbTestPersonal.isChecked) "com.whatsapp" else "com.whatsapp.w4b"
             AgentForegroundService.sendDirectTest(this, phone, "Halo! Ini pesan tes otomatis dari WAGTW Agent.", targetPkg)
+            Toast.makeText(this, "Membuka WhatsApp untuk tes kirim...", Toast.LENGTH_SHORT).show()
         }
 
         btnPermissionNotif.setOnClickListener {
@@ -162,7 +267,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnToggleConnect.setOnClickListener {
-            saveConfig()
+            saveAccountSettings()
+            saveServerSettings()
 
             if (prefs.isServiceRunning) {
                 stopAgentService()
@@ -174,6 +280,9 @@ class MainActivity : AppCompatActivity() {
         AgentForegroundService.onLogReceived = { logText ->
             runOnUiThread {
                 tvLogs.append("$logText\n")
+                scrollLogs.post {
+                    scrollLogs.fullScroll(ScrollView.FOCUS_DOWN)
+                }
             }
         }
 
@@ -193,7 +302,7 @@ class MainActivity : AppCompatActivity() {
         }
         prefs.isServiceRunning = true
         updateStatus(true)
-        Toast.makeText(this, "Layanan WAGTW Agent Aktif!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "🚀 Layanan WAGTW Agent Aktif!", Toast.LENGTH_SHORT).show()
     }
 
     private fun stopAgentService() {
@@ -201,18 +310,22 @@ class MainActivity : AppCompatActivity() {
         stopService(intent)
         prefs.isServiceRunning = false
         updateStatus(false)
-        Toast.makeText(this, "Layanan Dimatikan.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "🛑 Layanan Agen Dimatikan.", Toast.LENGTH_SHORT).show()
     }
 
     private fun updateStatus(isOnline: Boolean) {
         if (isOnline) {
-            tvStatusBadge.text = "Aktif (Online)"
+            tvStatusBadge.text = "ONLINE"
+            tvStatusBadge.setBackgroundResource(R.drawable.bg_badge_green)
             tvStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_green))
+
             btnToggleConnect.text = "Hentikan Layanan Agen"
             btnToggleConnect.backgroundTintList = ContextCompat.getColorStateList(this, R.color.status_red)
         } else {
-            tvStatusBadge.text = "Terputus"
+            tvStatusBadge.text = "OFFLINE"
+            tvStatusBadge.setBackgroundResource(R.drawable.bg_badge)
             tvStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_red))
+
             btnToggleConnect.text = "Mulai Layanan Agen"
             btnToggleConnect.backgroundTintList = ContextCompat.getColorStateList(this, R.color.primary)
         }
@@ -224,9 +337,11 @@ class MainActivity : AppCompatActivity() {
         if (isNotifEnabled) {
             btnPermissionNotif.text = "Aktif ✓"
             btnPermissionNotif.isEnabled = false
+            btnPermissionNotif.setTextColor(ContextCompat.getColor(this, R.color.status_green))
         } else {
             btnPermissionNotif.text = "Beri Izin"
             btnPermissionNotif.isEnabled = true
+            btnPermissionNotif.setTextColor(ContextCompat.getColor(this, R.color.status_orange))
         }
 
         // 2. Accessibility Permission
@@ -234,9 +349,11 @@ class MainActivity : AppCompatActivity() {
         if (isAccessibilityEnabled) {
             btnPermissionAccessibility.text = "Aktif ✓"
             btnPermissionAccessibility.isEnabled = false
+            btnPermissionAccessibility.setTextColor(ContextCompat.getColor(this, R.color.status_green))
         } else {
             btnPermissionAccessibility.text = "Beri Izin"
             btnPermissionAccessibility.isEnabled = true
+            btnPermissionAccessibility.setTextColor(ContextCompat.getColor(this, R.color.status_orange))
         }
 
         // 3. Battery Optimization
@@ -246,9 +363,11 @@ class MainActivity : AppCompatActivity() {
             if (isIgnoringBattery) {
                 btnPermissionBattery.text = "Aktif ✓"
                 btnPermissionBattery.isEnabled = false
+                btnPermissionBattery.setTextColor(ContextCompat.getColor(this, R.color.status_green))
             } else {
                 btnPermissionBattery.text = "Beri Izin"
                 btnPermissionBattery.isEnabled = true
+                btnPermissionBattery.setTextColor(ContextCompat.getColor(this, R.color.status_orange))
             }
         }
     }

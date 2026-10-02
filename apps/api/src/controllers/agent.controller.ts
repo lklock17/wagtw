@@ -328,8 +328,8 @@ export const getPendingMessages = async (req: Request, res: Response) => {
 
 // 4. Update message status
 export const updateMessageStatus = async (req: Request, res: Response) => {
-  const { messageId, status, error } = req.body;
-  console.log(`[Android Agent] Message/Task ${messageId} status: ${status} ${error ? `(${error})` : ''}`);
+  const { messageId, status, error, deviceStatus } = req.body;
+  console.log(`[Android Agent] Message/Task ${messageId} status: ${status} ${error ? `(${error})` : ''} ${deviceStatus ? `[Device: ${deviceStatus}]` : ''}`);
 
   // Check group join tasks
   const gTask = groupJoinTasks.find(t => t.id === messageId);
@@ -341,13 +341,85 @@ export const updateMessageStatus = async (req: Request, res: Response) => {
 
   if (messageId) {
     try {
+      const finalStatus = (status === 'SENT' || status === 'JOINED' || status === 'SUCCESS') ? 'SENT' : 'FAILED';
+
+      const existingLog = await prisma.messageLog.findUnique({
+        where: { id: messageId }
+      });
+
       await prisma.messageLog.updateMany({
         where: { id: messageId },
         data: {
-          status: (status === 'SENT' || status === 'JOINED' || status === 'SUCCESS') ? 'SENT' : 'FAILED',
+          status: finalStatus,
           error: error || null
         }
       });
+
+      // Handle Device Suspended, Auto-Failover, & Circuit Breaker (Auto-Stop)
+      if (finalStatus === 'FAILED' && existingLog) {
+        const isDeviceIssue = deviceStatus === 'SUSPENDED' || 
+          error?.includes('banned') || 
+          error?.includes('ditangguhkan') || 
+          error?.includes('Timeout') || 
+          error?.includes('dibatasi') ||
+          error?.includes('TIMEOUT');
+
+        const isInvalidNumber = error?.includes('tidak terdaftar') || error?.includes('tidak valid');
+
+        if (isDeviceIssue && !isInvalidNumber) {
+          // If suspended or banned, mark device as paused and disconnected
+          if (deviceStatus === 'SUSPENDED' || error?.includes('banned') || error?.includes('ditangguhkan')) {
+            console.warn(`[Android Agent] Device ${existingLog.deviceId} suspended by WhatsApp! Marking paused & disconnected.`);
+            await prisma.device.updateMany({
+              where: { id: existingLog.deviceId },
+              data: { isPaused: true, status: 'DISCONNECTED' }
+            });
+          }
+
+          // Auto Failover: Find alternative connected device
+          const availableDevices = await prisma.device.findMany({
+            where: {
+              status: 'CONNECTED',
+              isPaused: false,
+              id: { not: existingLog.deviceId }
+            }
+          });
+
+          if (availableDevices.length > 0) {
+            const nextDevice = availableDevices[0];
+            console.log(`[Failover] Re-dispatching message ${messageId} to available device: ${nextDevice.name} (${nextDevice.id})`);
+
+            const newMsgId = `retry_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+            if (nextDevice.sessionData?.includes('ANDROID_AGENT')) {
+              enqueueAgentMessage(nextDevice.id, newMsgId, existingLog.to, existingLog.body);
+            } else {
+              axios.post(`${WORKER_URL}/messages/send`, {
+                deviceId: nextDevice.id,
+                to: existingLog.to,
+                text: existingLog.body
+              }, { timeout: 30000 }).catch(e => console.error('[Failover Worker Error]:', e.message));
+            }
+
+            await prisma.messageLog.create({
+              data: {
+                id: newMsgId,
+                deviceId: nextDevice.id,
+                to: existingLog.to,
+                body: existingLog.body,
+                type: existingLog.type,
+                status: 'PENDING'
+              }
+            });
+          } else {
+            console.error(`[Circuit Breaker] All WhatsApp devices are OFFLINE / SUSPENDED! Auto-stopping broadcast queue.`);
+            await prisma.bulkJob.updateMany({
+              where: { status: 'PROCESSING' },
+              data: { status: 'PAUSED' }
+            });
+          }
+        }
+      }
     } catch (e: any) {
       console.error('Failed to update message status in DB:', e.message);
     }

@@ -68,6 +68,28 @@ async function processBulkJob(jobId: string) {
   });
 
   for (const msg of job.messages) {
+    // Circuit Breaker check before each message
+    const currentDevice = await prisma.device.findUnique({ where: { id: job.deviceId } });
+    if (!currentDevice || currentDevice.status !== 'CONNECTED' || currentDevice.isPaused) {
+      // Find fallback connected device
+      const fallback = await prisma.device.findFirst({
+        where: { status: 'CONNECTED', isPaused: false, id: { not: job.deviceId } }
+      });
+
+      if (fallback) {
+        console.log(`[Bulk Job ${jobId}] Failover: Switching from ${job.deviceId} to ${fallback.name} (${fallback.id})`);
+        job.deviceId = fallback.id;
+        await prisma.bulkJob.update({ where: { id: jobId }, data: { deviceId: fallback.id } });
+      } else {
+        console.error(`[Bulk Circuit Breaker] All devices are OFFLINE or PAUSED. Auto-stopping bulk job ${jobId}.`);
+        await prisma.bulkJob.update({
+          where: { id: jobId },
+          data: { status: 'PAUSED' }
+        });
+        return;
+      }
+    }
+
     try {
       // Send to worker
       await axios.post(`${WORKER_URL}/messages/send`, {
