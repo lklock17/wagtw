@@ -60,6 +60,20 @@ export const sendMessage = async (req: Request, res: Response) => {
     });
   }
 
+  // Helper to distinguish physical Android Agent devices from QR Web devices
+  const isAgentDevice = (d: any): boolean => {
+    try {
+      const s = JSON.parse(d.sessionData || '{}');
+      return s.type === 'ANDROID_AGENT';
+    } catch (e) {
+      return d.sessionData?.includes('ANDROID_AGENT') || false;
+    }
+  };
+
+  // Partition devices: Physical Android Phones (Priority 1) vs QR Web Sessions (Fallback)
+  const agentDevices = connectedDevices.filter(d => isAgentDevice(d));
+  const qrWebDevices = connectedDevices.filter(d => !isAgentDevice(d));
+
   // Determine candidate devices queue
   let candidateQueue: typeof connectedDevices = [];
 
@@ -79,14 +93,15 @@ export const sendMessage = async (req: Request, res: Response) => {
     if (requestedDevice) {
       candidateQueue = [requestedDevice];
       if (failover) {
-        // Add other connected devices as fallback
-        const otherDevices = connectedDevices.filter((d) => d.id !== deviceId);
-        candidateQueue.push(...otherDevices);
+        // Fallback order: other Android agent phones first, then QR Web devices!
+        const otherAgents = agentDevices.filter((d) => d.id !== deviceId);
+        const otherQrWeb = qrWebDevices.filter((d) => d.id !== deviceId);
+        candidateQueue.push(...otherAgents, ...otherQrWeb);
       }
     } else {
       if (failover) {
-        // Device not connected/found, fallback to other connected devices
-        candidateQueue = [...connectedDevices];
+        // Device not connected/found: fallback to Android phones first, then QR Web devices!
+        candidateQueue = [...agentDevices, ...qrWebDevices];
       } else {
         return res.status(400).json({
           success: false,
@@ -95,14 +110,27 @@ export const sendMessage = async (req: Request, res: Response) => {
       }
     }
   } else {
-    // Auto-Rotate round-robin across connected devices
-    rotationIndex = rotationIndex % connectedDevices.length;
-    const rotated = [
-      ...connectedDevices.slice(rotationIndex),
-      ...connectedDevices.slice(0, rotationIndex)
-    ];
-    candidateQueue = rotated;
-    rotationIndex = (rotationIndex + 1) % connectedDevices.length;
+    // Auto-Rotate round-robin: ALWAYS prioritize physical Android phones!
+    // Only if all Android phones fail will it fall back to QR Web devices.
+    if (agentDevices.length > 0) {
+      rotationIndex = rotationIndex % agentDevices.length;
+      const rotatedAgents = [
+        ...agentDevices.slice(rotationIndex),
+        ...agentDevices.slice(0, rotationIndex)
+      ];
+      rotationIndex = (rotationIndex + 1) % agentDevices.length;
+      // Primary: Rotated Android phones; Secondary (Failover): QR Web devices
+      candidateQueue = [...rotatedAgents, ...qrWebDevices];
+    } else {
+      // If no Android phones are connected/unpaused, use QR Web devices
+      rotationIndex = rotationIndex % qrWebDevices.length;
+      const rotatedWeb = [
+        ...qrWebDevices.slice(rotationIndex),
+        ...qrWebDevices.slice(0, rotationIndex)
+      ];
+      rotationIndex = (rotationIndex + 1) % qrWebDevices.length;
+      candidateQueue = rotatedWeb;
+    }
   }
 
   let lastError: any = null;

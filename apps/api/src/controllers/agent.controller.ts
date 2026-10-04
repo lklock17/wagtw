@@ -29,6 +29,7 @@ export interface GroupJoinTask {
 
 const pendingAgentMessages = new Map<string, Array<AgentQueueItem>>();
 const groupJoinTasks: GroupJoinTask[] = [];
+const consecutiveTimeouts = new Map<string, number>();
 
 export interface AgentMessageResult {
   status: 'SENT' | 'FAILED';
@@ -177,6 +178,13 @@ export const registerAgent = async (req: Request, res: Response) => {
     const pPhone1 = cleanNumber(personalPhone);
     const pPhone2 = cleanNumber(personalPhone2);
 
+    // Fallback: If no slots are explicitly enabled, default to enabling personal slot 1 so the phone card always appears
+    let effEnableBusiness = enableBusiness;
+    let effEnablePersonal = enablePersonal;
+    if (!effEnableBusiness && !enableBusiness2 && !effEnablePersonal && !enablePersonal2) {
+      effEnablePersonal = true;
+    }
+
     const registeredDevices: any[] = [];
 
     // Helper to register / upsert a slot device
@@ -188,9 +196,8 @@ export const registerAgent = async (req: Request, res: Response) => {
       pkg: string,
       dualApp: 'ACCOUNT_1' | 'ACCOUNT_2'
     ) => {
-      if (!num || !enabled) return null;
+      if (!enabled) return null;
       
-      let dev = await prisma.device.findFirst({ where: { phoneNumber: num } });
       const devName = `${phoneName} - ${label}`;
       const sessionData = JSON.stringify({
         type: 'ANDROID_AGENT',
@@ -204,11 +211,50 @@ export const registerAgent = async (req: Request, res: Response) => {
         dualAppTarget: dualApp
       });
 
+      // 1. Find existing device for this specific phoneId and slot
+      let dev: any = null;
+      try {
+        const candidates = await prisma.device.findMany({
+          where: {
+            sessionData: {
+              contains: `"phoneId":"${phoneId}"`
+            }
+          }
+        });
+        dev = candidates.find(c => {
+          try {
+            const s = JSON.parse(c.sessionData || '{}');
+            return s.slot === slot;
+          } catch (e) {
+            return false;
+          }
+        });
+      } catch (e) {}
+
+      // 2. If not found by phoneId+slot, check if an existing device matches the phone number
+      if (!dev && num) {
+        dev = await prisma.device.findUnique({ where: { phoneNumber: num } });
+      }
+
+      // 3. Clear phone number from any other device to avoid unique constraint collision
+      if (num) {
+        const existingWithSameNum = await prisma.device.findUnique({ where: { phoneNumber: num } });
+        if (existingWithSameNum && (!dev || existingWithSameNum.id !== dev.id)) {
+          await prisma.device.update({
+            where: { id: existingWithSameNum.id },
+            data: { phoneNumber: null }
+          });
+        }
+      }
+
+      const cleanPhone = num || (dev?.phoneNumber) || null;
+
       if (dev) {
         dev = await prisma.device.update({
           where: { id: dev.id },
           data: {
             name: devName,
+            phoneNumber: cleanPhone,
             status: 'CONNECTED',
             lastConnected: new Date(),
             sessionData
@@ -218,7 +264,7 @@ export const registerAgent = async (req: Request, res: Response) => {
         dev = await prisma.device.create({
           data: {
             name: devName,
-            phoneNumber: num,
+            phoneNumber: cleanPhone,
             status: 'CONNECTED',
             lastConnected: new Date(),
             sessionData
@@ -229,9 +275,9 @@ export const registerAgent = async (req: Request, res: Response) => {
       return dev;
     };
 
-    const bDev1 = await upsertSlot(bPhone1, enableBusiness, 'BUSINESS_1', 'Bisnis (Slot 1)', 'com.whatsapp.w4b', 'ACCOUNT_1');
+    const bDev1 = await upsertSlot(bPhone1, effEnableBusiness, 'BUSINESS_1', 'Bisnis (Slot 1)', 'com.whatsapp.w4b', 'ACCOUNT_1');
     const bDev2 = await upsertSlot(bPhone2, enableBusiness2, 'BUSINESS_2', 'Bisnis Dual (Slot 2)', 'com.whatsapp.w4b', 'ACCOUNT_2');
-    const pDev1 = await upsertSlot(pPhone1, enablePersonal, 'PERSONAL_1', 'Personal (Slot 1)', 'com.whatsapp', 'ACCOUNT_1');
+    const pDev1 = await upsertSlot(pPhone1, effEnablePersonal, 'PERSONAL_1', 'Personal (Slot 1)', 'com.whatsapp', 'ACCOUNT_1');
     const pDev2 = await upsertSlot(pPhone2, enablePersonal2, 'PERSONAL_2', 'Personal Dual (Slot 2)', 'com.whatsapp', 'ACCOUNT_2');
 
     res.json({
@@ -294,36 +340,27 @@ export const receiveIncomingMessage = async (req: Request, res: Response) => {
     if (cleanSender.startsWith('0')) cleanSender = '62' + cleanSender.substring(1);
     const remoteNumber = cleanSender || sender;
 
-    // Find or create InboxThread
-    let thread = await prisma.inboxThread.findUnique({
+    // Find or create InboxThread with upsert to prevent unique constraint collisions
+    const thread = await prisma.inboxThread.upsert({
       where: {
         deviceId_remoteNumber: {
           deviceId,
           remoteNumber
         }
+      },
+      update: {
+        contactName: sender,
+        lastMessage: text,
+        unreadCount: { increment: 1 }
+      },
+      create: {
+        deviceId,
+        remoteNumber,
+        contactName: sender,
+        lastMessage: text,
+        unreadCount: 1
       }
     });
-
-    if (!thread) {
-      thread = await prisma.inboxThread.create({
-        data: {
-          deviceId,
-          remoteNumber,
-          contactName: sender,
-          lastMessage: text,
-          unreadCount: 1
-        }
-      });
-    } else {
-      await prisma.inboxThread.update({
-        where: { id: thread.id },
-        data: {
-          contactName: sender,
-          lastMessage: text,
-          unreadCount: { increment: 1 }
-        }
-      });
-    }
 
     // Save message into InboxMessage
     const savedMsg = await prisma.inboxMessage.create({
@@ -456,15 +493,25 @@ export const processMessageStatus = async (messageId: string, status: string, er
         }
       }
 
+      if (finalStatus === 'SENT' && existingLog?.deviceId) {
+        // Reset consecutive timeout counter upon successful send
+        consecutiveTimeouts.delete(existingLog.deviceId);
+      }
+
       // Handle Device Suspended & Circuit Breaker (Auto-Stop for Bulk Jobs)
       if (finalStatus === 'FAILED' && existingLog) {
         const isSuspended = deviceStatus === 'SUSPENDED' || 
           error?.includes('banned') || 
           error?.includes('ditangguhkan') || 
-          error?.includes('dibatasi');
+          error?.includes('dibatasi') ||
+          error?.includes('chat baru') ||
+          error?.includes('obrolan baru');
+
+        const isTimeout = deviceStatus === 'TIMEOUT' || error?.includes('Timeout');
 
         if (isSuspended) {
-          console.warn(`[Android Agent] Device ${existingLog.deviceId} suspended/banned by WhatsApp! Marking paused & disconnected.`);
+          console.warn(`[Android Agent] Device ${existingLog.deviceId} suspended/dibatasi by WhatsApp! Marking paused & disconnected.`);
+          consecutiveTimeouts.delete(existingLog.deviceId);
           await prisma.device.updateMany({
             where: { id: existingLog.deviceId },
             data: { isPaused: true, status: 'DISCONNECTED' }
@@ -477,6 +524,19 @@ export const processMessageStatus = async (messageId: string, status: string, er
               where: { id: bulkMsg.jobId },
               data: { status: 'PAUSED' }
             });
+          }
+        } else if (isTimeout) {
+          const count = (consecutiveTimeouts.get(existingLog.deviceId) || 0) + 1;
+          consecutiveTimeouts.set(existingLog.deviceId, count);
+          console.warn(`[Circuit Breaker] Device ${existingLog.deviceId} consecutive timeout: ${count}/3`);
+
+          if (count >= 3) {
+            console.warn(`[Circuit Breaker] Device ${existingLog.deviceId} reached 3 consecutive timeouts! Auto-pausing device to prevent continuous failures.`);
+            await prisma.device.updateMany({
+              where: { id: existingLog.deviceId },
+              data: { isPaused: true }
+            });
+            consecutiveTimeouts.delete(existingLog.deviceId);
           }
         }
       }
@@ -589,10 +649,10 @@ export const clearGroupTasks = async (req: Request, res: Response) => {
 export const checkAgentUpdate = async (req: Request, res: Response) => {
   res.json({
     success: true,
-    latestVersionCode: 15,
-    latestVersionName: '1.7.5',
+    latestVersionCode: 16,
+    latestVersionName: '1.7.6',
     downloadUrl: 'https://github.com/lklock17/wagtw/releases/download/android-agent-latest/app-debug.apk',
-    releaseNotes: '• Fixed Keystore Signature (Mencegah konflik tanda tangan saat update)\n• Kompatibilitas installer Android 10-14 & HyperOS/MIUI/OneUI\n• WebSocket Realtime 0ms Instan',
+    releaseNotes: '• Deteksi instan pembatasan akun WhatsApp (Akun Dibatasi / Limit Chat Baru)\n• Early check otomatis pembatasan akun dalam 2 detik\n• Sinyal auto-pause seketika ke server saat akun terkena limit\n• Optimalisasi kompatibilitas Oppo ColorOS & Xiaomi HyperOS',
     minSupportedVersionCode: 10
   });
 };

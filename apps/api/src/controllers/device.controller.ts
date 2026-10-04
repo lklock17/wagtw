@@ -1,21 +1,43 @@
 import { Request, Response } from 'express';
 import { prisma } from '@wagtw/database';
 import axios from 'axios';
+import { getActivePhoneIds } from '../services/agent-ws.service';
 
 const WORKER_URL = process.env.WORKER_URL || 'http://localhost:4011';
 
 export const getDevices = async (req: Request, res: Response) => {
   try {
-    // If an Android Agent device hasn't pinged in the last 20 seconds, mark as DISCONNECTED
-    const cutoff = new Date(Date.now() - 20000);
-    await prisma.device.updateMany({
+    const activePhoneIds = getActivePhoneIds();
+    const cutoff = new Date(Date.now() - 35000);
+    
+    // Only disconnect agent devices that are NOT currently connected via WebSocket and haven't pinged recently
+    const agentDevices = await prisma.device.findMany({
       where: {
         status: 'CONNECTED',
-        sessionData: { contains: 'ANDROID_AGENT' },
-        lastConnected: { lt: cutoff }
-      },
-      data: { status: 'DISCONNECTED' }
+        sessionData: { contains: 'ANDROID_AGENT' }
+      }
     });
+
+    const toDisconnect: string[] = [];
+    for (const dev of agentDevices) {
+      let pId = '';
+      try {
+        const s = JSON.parse(dev.sessionData || '{}');
+        pId = s.phoneId;
+      } catch (e) {}
+
+      const isWsActive = pId && activePhoneIds.includes(pId);
+      if (!isWsActive && (!dev.lastConnected || dev.lastConnected < cutoff)) {
+        toDisconnect.push(dev.id);
+      }
+    }
+
+    if (toDisconnect.length > 0) {
+      await prisma.device.updateMany({
+        where: { id: { in: toDisconnect } },
+        data: { status: 'DISCONNECTED' }
+      });
+    }
   } catch (e) {}
 
   const devices = await prisma.device.findMany({

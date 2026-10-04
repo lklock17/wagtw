@@ -20,12 +20,45 @@ class WhatsAppAccessibilityService : AccessibilityService() {
 
         private val watchdogHandler = Handler(Looper.getMainLooper())
         private var watchdogRunnable: Runnable? = null
+        private var earlyCheckRunnable: Runnable? = null
 
         fun startSendWatchdog(msgId: String, dualAppTarget: String? = null) {
             cancelWatchdog()
             lastSentMessageId = msgId
             forcedDualAppAccount = dualAppTarget
             isWaitingForSend = true
+
+            // Early check at 2s for restricted account banner or fast error popups
+            earlyCheckRunnable = Runnable {
+                if (isWaitingForSend && instance != null) {
+                    try {
+                        val activeRoot = instance?.rootInActiveWindow
+                        if (activeRoot != null) {
+                            val isRestricted = instance!!.findTextRecursive(activeRoot, "dibatasi") ||
+                                               instance!!.findTextRecursive(activeRoot, "chat baru") ||
+                                               instance!!.findTextRecursive(activeRoot, "tampilkan detail")
+                            if (isRestricted) {
+                                Log.w("WAGTW_ACCESSIBILITY", "Early check: Account restriction banner detected!")
+                                cancelWatchdog()
+                                val currentMsgId = lastSentMessageId
+                                isWaitingForSend = false
+                                lastSentMessageId = null
+                                forcedDualAppAccount = null
+                                AgentForegroundService.appendLog("❌ Gagal: Akun Anda dibatasi oleh WhatsApp (Limit chat baru)")
+                                if (currentMsgId != null) {
+                                    AgentForegroundService.notifyMessageFailed(
+                                        currentMsgId,
+                                        "Akun Anda dibatasi oleh WhatsApp (Limit chat baru)",
+                                        "SUSPENDED"
+                                    )
+                                }
+                                instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                            }
+                        }
+                    } catch (e: Exception) {}
+                }
+            }
+            watchdogHandler.postDelayed(earlyCheckRunnable!!, 2000)
 
             watchdogRunnable = Runnable {
                 if (isWaitingForSend) {
@@ -53,7 +86,9 @@ class WhatsAppAccessibilityService : AccessibilityService() {
 
         fun cancelWatchdog() {
             watchdogRunnable?.let { watchdogHandler.removeCallbacks(it) }
+            earlyCheckRunnable?.let { watchdogHandler.removeCallbacks(it) }
             watchdogRunnable = null
+            earlyCheckRunnable = null
             forcedDualAppAccount = null
         }
     }
@@ -178,6 +213,7 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                     }
                     err.contains("chat baru", true) || err.contains("obrolan baru", true) || err.contains("dibatasi", true) -> {
                         detectedError = "Akun Anda dibatasi oleh WhatsApp (Limit chat baru)"
+                        isSuspended = true
                     }
                     err.contains("tidak diizinkan", true) || err.contains("not allowed", true) ||
                     err.contains("diblokir", true) || err.contains("banned", true) ||
@@ -192,6 +228,18 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                     }
                 }
                 break
+            }
+        }
+
+        // Deep fallback recursive scan for restriction banner on custom view trees
+        if (detectedError == null) {
+            val isRestricted = findTextRecursive(rootNode, "dibatasi") ||
+                               findTextRecursive(rootNode, "chat baru") ||
+                               findTextRecursive(rootNode, "obrolan baru") ||
+                               findTextRecursive(rootNode, "tampilkan detail")
+            if (isRestricted) {
+                detectedError = "Akun Anda dibatasi oleh WhatsApp (Limit chat baru)"
+                isSuspended = true
             }
         }
 
@@ -483,6 +531,22 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                 }
             }, 300)
         }
+    }
+
+    fun findTextRecursive(node: AccessibilityNodeInfo?, targetLower: String): Boolean {
+        if (node == null) return false
+        val text = node.text?.toString()?.lowercase()
+        if (text != null && text.contains(targetLower)) return true
+        val desc = node.contentDescription?.toString()?.lowercase()
+        if (desc != null && desc.contains(targetLower)) return true
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (findTextRecursive(child, targetLower)) {
+                return true
+            }
+        }
+        return false
     }
 
     override fun onInterrupt() {

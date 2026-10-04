@@ -72,10 +72,21 @@ async function processBulkJob(jobId: string) {
     // Circuit Breaker check before each message
     const currentDevice = await prisma.device.findUnique({ where: { id: job.deviceId } });
     if (!currentDevice || currentDevice.status !== 'CONNECTED' || currentDevice.isPaused) {
-      // Find fallback connected device
-      const fallback = await prisma.device.findFirst({
+      // Find fallback connected device, prioritizing physical Android Agent devices first
+      const connectedCandidates = await prisma.device.findMany({
         where: { status: 'CONNECTED', isPaused: false, id: { not: job.deviceId } }
       });
+
+      const fallbackAgent = connectedCandidates.find(d => {
+        try {
+          const s = JSON.parse(d.sessionData || '{}');
+          return s.type === 'ANDROID_AGENT';
+        } catch (e) {
+          return d.sessionData?.includes('ANDROID_AGENT');
+        }
+      });
+
+      const fallback = fallbackAgent || connectedCandidates[0];
 
       if (fallback) {
         console.log(`[Bulk Job ${jobId}] Failover: Switching from ${job.deviceId} to ${fallback.name} (${fallback.id})`);
