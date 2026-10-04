@@ -163,8 +163,8 @@ export const sendMessage = async (req: Request, res: Response) => {
 
         enqueueAgentMessage(device.id, msgId, recipient, content || caption || '');
 
-        // Wait for the physical phone agent to execute and report real result (up to 12s)
-        const agentResult = await waitForAgentMessage(msgId, 12000);
+        // Wait for the physical phone agent to execute and report real result (up to 35s)
+        const agentResult = await waitForAgentMessage(msgId, 35000);
 
         if (agentResult.status === 'SENT') {
           return res.json({
@@ -189,6 +189,58 @@ export const sendMessage = async (req: Request, res: Response) => {
         } else {
           lastError = agentResult.error || 'Pesan gagal dikirim oleh WhatsApp ponsel';
           console.warn(`[Failover] Agent device ${device.name} failed: ${lastError}.`);
+
+          // CRITICAL ANTI-DUPLICATION RULE:
+          // If the message was already queued and sent to an active Android phone,
+          // DO NOT failover to Web QR if the reason is a timeout or if the recipient number was invalid.
+          // Doing so will cause the recipient to receive duplicate messages because the phone might still complete the send!
+          const isTerminalNumberError = lastError.includes('tidak terdaftar') || lastError.includes('invalid') || lastError.includes('tidak valid');
+          const isTimeoutError = lastError.includes('Timeout');
+
+          if (isTerminalNumberError) {
+            // Target number is not on WhatsApp, trying other devices will only fail and risk account ban
+            return res.status(400).json({
+              success: false,
+              status: 'FAILED',
+              error: lastError,
+              data: {
+                messageId: msgId,
+                recipient,
+                status: 'FAILED',
+                sentVia: {
+                  deviceId: device.id,
+                  deviceName: device.name,
+                  phoneNumber: device.phoneNumber,
+                  type: 'ANDROID_AGENT'
+                },
+                failoverTriggered: attempts > 1,
+                attemptCount: attempts
+              }
+            });
+          }
+
+          if (isTimeoutError) {
+            // Suppress failover to QR to prevent duplicate send!
+            console.warn(`[Anti-Duplication] Message ${msgId} timed out on ${device.name}. Suppressing failover to QR to prevent duplicate send.`);
+            return res.status(504).json({
+              success: false,
+              status: 'TIMEOUT',
+              error: 'WhatsApp ponsel sedang memproses antrean pesan (timeout 35 detik). Pengalihan ke nomor lain dibatalkan demi mencegah pesan terkirim dobel.',
+              data: {
+                messageId: msgId,
+                recipient,
+                status: 'TIMEOUT',
+                sentVia: {
+                  deviceId: device.id,
+                  deviceName: device.name,
+                  phoneNumber: device.phoneNumber,
+                  type: 'ANDROID_AGENT'
+                },
+                failoverTriggered: false,
+                attemptCount: attempts
+              }
+            });
+          }
 
           // If failover is enabled and there are other candidate devices, try next device
           if (failover && attempts < candidateQueue.length) {
