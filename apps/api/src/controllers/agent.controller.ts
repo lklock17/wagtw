@@ -647,6 +647,7 @@ export const clearGroupTasks = async (req: Request, res: Response) => {
 
 // 9. Agent In-App OTA Update Check
 export const checkAgentUpdate = async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.json({
     success: true,
     latestVersionCode: 17,
