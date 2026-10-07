@@ -570,7 +570,6 @@ class WhatsAppAccessibilityService : AccessibilityService() {
 
         return false
     }
-    }
 
     private var lastDualAppClickTime: Long = 0L
 
