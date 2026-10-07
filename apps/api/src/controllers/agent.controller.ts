@@ -649,10 +649,10 @@ export const clearGroupTasks = async (req: Request, res: Response) => {
 export const checkAgentUpdate = async (req: Request, res: Response) => {
   res.json({
     success: true,
-    latestVersionCode: 16,
-    latestVersionName: '1.7.6',
+    latestVersionCode: 17,
+    latestVersionName: '1.7.7',
     downloadUrl: 'https://github.com/lklock17/wagtw/releases/download/android-agent-latest/app-debug.apk',
-    releaseNotes: '• Deteksi instan pembatasan akun WhatsApp (Akun Dibatasi / Limit Chat Baru)\n• Early check otomatis pembatasan akun dalam 2 detik\n• Sinyal auto-pause seketika ke server saat akun terkena limit\n• Optimalisasi kompatibilitas Oppo ColorOS & Xiaomi HyperOS',
+    releaseNotes: '• Perbaikan penekanan tombol Kirim otomatis (Active Polling 300ms)\n• Fallback gesture tap & multi-selector untuk MIUI/Redmi\n• Penanganan otomatis dialog Dual App & Just Once\n• Peningkatan keandalan auto-send WhatsApp',
     minSupportedVersionCode: 10
   });
 };
