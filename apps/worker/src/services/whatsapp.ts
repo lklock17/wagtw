@@ -403,7 +403,7 @@ class WhatsAppManager {
         debug: false,
         logQR: false,
         puppeteerOptions: {
-          protocolTimeout: 30000,
+          protocolTimeout: 120000,
           userDataDir: tokenDir,
           defaultViewport: {
             width: 1024,
@@ -425,7 +425,7 @@ class WhatsAppManager {
           '--disable-infobars',
           '--window-size=1280,800',
           '--disable-features=IsolateOrigins,site-per-process',
-          '--js-flags=--max-old-space-size=256',
+          '--js-flags=--max-old-space-size=512',
           '--renderer-process-limit=1',
           '--disable-extensions',
           '--disable-component-extensions-with-background-pages',
@@ -1204,6 +1204,10 @@ class WhatsAppManager {
     if (!connected) return null;
     this.authenticatedSessions.add(deviceId);
     return client;
+  }
+
+  evictAuthenticatedSession(deviceId: string) {
+    this.authenticatedSessions.delete(deviceId);
   }
 
   async returnToQrScreen(deviceId: string) {

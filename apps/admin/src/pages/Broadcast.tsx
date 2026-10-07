@@ -98,10 +98,15 @@ export default function Broadcast() {
     setLoading(true);
     setAlertMsg(null);
     try {
-      // If 'rotate', use the first active unpaused device or let worker handle
-      const devId = selectedDevice === 'rotate' ? activeConnected[0]?.id : selectedDevice;
+      // If 'rotate', use the first active unpaused device as anchor and tag with [Auto-Rotate]
+      const isRotate = selectedDevice === 'rotate';
+      const devId = isRotate ? activeConnected[0]?.id : selectedDevice;
+      const defaultName = `Kampanye ${new Date().toLocaleDateString('id-ID')} ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`;
+      const baseName = jobName.trim() || defaultName;
+      const finalName = isRotate && !baseName.includes('[Auto-Rotate]') ? `${baseName} [Auto-Rotate]` : baseName;
+
       await bulkService.createJob({
-        name: jobName || `Kampanye ${new Date().toLocaleDateString('id-ID')} ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`,
+        name: finalName,
         deviceId: devId,
         contacts,
         body: message,

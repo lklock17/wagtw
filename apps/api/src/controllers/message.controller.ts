@@ -93,15 +93,13 @@ export const sendMessage = async (req: Request, res: Response) => {
     if (requestedDevice) {
       candidateQueue = [requestedDevice];
       if (failover) {
-        // Fallback order: other Android agent phones first, then QR Web devices!
-        const otherAgents = agentDevices.filter((d) => d.id !== deviceId);
-        const otherQrWeb = qrWebDevices.filter((d) => d.id !== deviceId);
-        candidateQueue.push(...otherAgents, ...otherQrWeb);
+        // Fallback order: other active connected devices
+        const otherDevices = connectedDevices.filter((d) => d.id !== deviceId);
+        candidateQueue.push(...otherDevices);
       }
     } else {
       if (failover) {
-        // Device not connected/found: fallback to Android phones first, then QR Web devices!
-        candidateQueue = [...agentDevices, ...qrWebDevices];
+        candidateQueue = [...connectedDevices];
       } else {
         return res.status(400).json({
           success: false,
@@ -110,27 +108,14 @@ export const sendMessage = async (req: Request, res: Response) => {
       }
     }
   } else {
-    // Auto-Rotate round-robin: ALWAYS prioritize physical Android phones!
-    // Only if all Android phones fail will it fall back to QR Web devices.
-    if (agentDevices.length > 0) {
-      rotationIndex = rotationIndex % agentDevices.length;
-      const rotatedAgents = [
-        ...agentDevices.slice(rotationIndex),
-        ...agentDevices.slice(0, rotationIndex)
-      ];
-      rotationIndex = (rotationIndex + 1) % agentDevices.length;
-      // Primary: Rotated Android phones; Secondary (Failover): QR Web devices
-      candidateQueue = [...rotatedAgents, ...qrWebDevices];
-    } else {
-      // If no Android phones are connected/unpaused, use QR Web devices
-      rotationIndex = rotationIndex % qrWebDevices.length;
-      const rotatedWeb = [
-        ...qrWebDevices.slice(rotationIndex),
-        ...qrWebDevices.slice(0, rotationIndex)
-      ];
-      rotationIndex = (rotationIndex + 1) % qrWebDevices.length;
-      candidateQueue = rotatedWeb;
-    }
+    // Auto-Rotate round-robin across ALL connected & unpaused devices (both phone agent & QR web sessions)
+    rotationIndex = rotationIndex % connectedDevices.length;
+    const rotated = [
+      ...connectedDevices.slice(rotationIndex),
+      ...connectedDevices.slice(0, rotationIndex)
+    ];
+    rotationIndex = (rotationIndex + 1) % connectedDevices.length;
+    candidateQueue = rotated;
   }
 
   let lastError: any = null;

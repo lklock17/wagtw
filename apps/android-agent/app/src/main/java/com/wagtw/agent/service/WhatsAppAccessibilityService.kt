@@ -1,6 +1,9 @@
 package com.wagtw.agent.service
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -20,6 +23,7 @@ class WhatsAppAccessibilityService : AccessibilityService() {
 
         private val watchdogHandler = Handler(Looper.getMainLooper())
         private var watchdogRunnable: Runnable? = null
+        private var pollingRunnable: Runnable? = null
         private var earlyCheckRunnable: Runnable? = null
 
         fun startSendWatchdog(msgId: String, dualAppTarget: String? = null) {
@@ -28,7 +32,41 @@ class WhatsAppAccessibilityService : AccessibilityService() {
             forcedDualAppAccount = dualAppTarget
             isWaitingForSend = true
 
-            // Early check at 2s for restricted account banner or fast error popups
+            // 1. ACTIVE POLLING LOOP: Check every 300ms to immediately detect and click the Send button
+            // as soon as WhatsApp finishes rendering the chat and compose box!
+            var elapsed = 0
+            pollingRunnable = object : Runnable {
+                override fun run() {
+                    elapsed += 300
+                    if (isWaitingForSend && instance != null) {
+                        try {
+                            val activeRoot = instance?.rootInActiveWindow
+                            if (activeRoot != null) {
+                                val pkg = activeRoot.packageName?.toString() ?: ""
+                                val isDualAppDialog = pkg.contains("miui") || pkg == "android" || pkg.contains("resolver") || pkg.contains("xspace")
+
+                                if (isDualAppDialog) {
+                                    instance!!.handleXiaomiDualAppDialog(activeRoot)
+                                } else {
+                                    if (instance!!.handleTrustDialog(activeRoot)) return
+                                    if (instance!!.detectAndHandleErrors(activeRoot)) return
+                                    if (instance!!.handleGroupJoinErrors(activeRoot)) return
+                                    if (instance!!.handleGroupJoin(activeRoot)) return
+                                    if (instance!!.tryClickSendButton(activeRoot)) return
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("WAGTW_ACCESSIBILITY", "Watchdog polling error: ${e.message}")
+                        }
+                    }
+                    if (isWaitingForSend && elapsed < 7000) {
+                        watchdogHandler.postDelayed(this, 300)
+                    }
+                }
+            }
+            watchdogHandler.postDelayed(pollingRunnable!!, 300)
+
+            // 2. Early check at 1.8s for restricted account banner or fast error popups
             earlyCheckRunnable = Runnable {
                 if (isWaitingForSend && instance != null) {
                     try {
@@ -58,8 +96,9 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                     } catch (e: Exception) {}
                 }
             }
-            watchdogHandler.postDelayed(earlyCheckRunnable!!, 2000)
+            watchdogHandler.postDelayed(earlyCheckRunnable!!, 1800)
 
+            // 3. Final Watchdog Timeout at 7s
             watchdogRunnable = Runnable {
                 if (isWaitingForSend) {
                     Log.w("WAGTW_ACCESSIBILITY", "Send watchdog triggered! Message: $lastSentMessageId")
@@ -68,11 +107,11 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                     lastSentMessageId = null
                     forcedDualAppAccount = null
 
-                    AgentForegroundService.appendLog("⚠️ Gagal: Timeout respon WhatsApp (6 detik)")
+                    AgentForegroundService.appendLog("⚠️ Gagal: Timeout respon WhatsApp (7 detik)")
                     if (currentMsgId != null) {
                         AgentForegroundService.notifyMessageFailed(
                             currentMsgId,
-                            "Timeout: WhatsApp tidak merespons atau tombol kirim tidak muncul (6 detik)",
+                            "Timeout: WhatsApp tidak merespons atau tombol kirim tidak muncul (7 detik)",
                             "TIMEOUT"
                         )
                     }
@@ -81,13 +120,15 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                     instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                 }
             }
-            watchdogHandler.postDelayed(watchdogRunnable!!, 6000)
+            watchdogHandler.postDelayed(watchdogRunnable!!, 7000)
         }
 
         fun cancelWatchdog() {
             watchdogRunnable?.let { watchdogHandler.removeCallbacks(it) }
+            pollingRunnable?.let { watchdogHandler.removeCallbacks(it) }
             earlyCheckRunnable?.let { watchdogHandler.removeCallbacks(it) }
             watchdogRunnable = null
+            pollingRunnable = null
             earlyCheckRunnable = null
             forcedDualAppAccount = null
         }
@@ -120,7 +161,23 @@ class WhatsAppAccessibilityService : AccessibilityService() {
             return
         }
 
-        // 0.1 AUTO-CONFIRM "Lanjutkan obrolan" / "Continue chat" (Trust this business safety bottom sheet)
+        // 0.1 AUTO-CONFIRM "Lanjutkan obrolan" / "Continue chat"
+        if (handleTrustDialog(rootNode)) return
+
+        // 1. DETECT WHATSAPP ERROR DIALOGS, LOGGED OUT SCREEN, & SUSPEND / BANNED
+        if (detectAndHandleErrors(rootNode)) return
+
+        // 2. DETECT GROUP JOIN ERRORS
+        if (handleGroupJoinErrors(rootNode)) return
+
+        // 3. SEARCH AND CLICK "GABUNG KE GRUP" (AUTO JOIN GROUP WARMUP)
+        if (handleGroupJoin(rootNode)) return
+
+        // 4. SEARCH AND CLICK SEND BUTTON
+        tryClickSendButton(rootNode)
+    }
+
+    fun handleTrustDialog(rootNode: AccessibilityNodeInfo): Boolean {
         val hasTrustDialog = rootNode.findAccessibilityNodeInfosByText("Apakah Anda percaya bisnis ini").isNotEmpty() ||
                              rootNode.findAccessibilityNodeInfosByText("Do you trust this business").isNotEmpty() ||
                              rootNode.findAccessibilityNodeInfosByText("Batalkan obrolan").isNotEmpty() ||
@@ -152,13 +209,14 @@ class WhatsAppAccessibilityService : AccessibilityService() {
             if (clicked) {
                 Log.d("WAGTW_ACCESSIBILITY", "Clicked 'Lanjutkan obrolan' (Trust business prompt)")
                 AgentForegroundService.appendLog("🛡️ Mengonfirmasi 'Lanjutkan obrolan' (Dialog keamanan WhatsApp)...")
-                // Reset watchdog timer with fresh 6 seconds for chat screen to load
                 startSendWatchdog(lastSentMessageId ?: "retry", forcedDualAppAccount)
-                return
+                return true
             }
         }
+        return false
+    }
 
-        // 1. DETECT WHATSAPP ERROR DIALOGS, LOGGED OUT SCREEN, & SUSPEND / BANNED
+    fun detectAndHandleErrors(rootNode: AccessibilityNodeInfo): Boolean {
         val errorKeywords = listOf(
             // Welcome / Logged out / Reset Screen (from fresh install, reset, or ban logout)
             "Selamat datang di WhatsApp",
@@ -291,10 +349,12 @@ class WhatsAppAccessibilityService : AccessibilityService() {
             Handler(Looper.getMainLooper()).postDelayed({
                 performGlobalAction(GLOBAL_ACTION_BACK)
             }, 600)
-            return
+            return true
         }
+        return false
+    }
 
-        // 2. DETECT GROUP JOIN ERRORS (Grup Penuh, Tautan Kadaluwarsa)
+    fun handleGroupJoinErrors(rootNode: AccessibilityNodeInfo): Boolean {
         val groupErrorKeywords = listOf("Grup ini penuh", "This group is full", "Tautan ini telah disetel ulang", "This invite link has been reset", "Tidak dapat bergabung", "Couldn't join")
         for (gErr in groupErrorKeywords) {
             val found = rootNode.findAccessibilityNodeInfosByText(gErr)
@@ -323,11 +383,13 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                 Handler(Looper.getMainLooper()).postDelayed({
                     performGlobalAction(GLOBAL_ACTION_BACK)
                 }, 800)
-                return
+                return true
             }
         }
+        return false
+    }
 
-        // 3. SEARCH AND CLICK "GABUNG KE GRUP" (AUTO JOIN GROUP WARMUP)
+    fun handleGroupJoin(rootNode: AccessibilityNodeInfo): Boolean {
         val joinKeywords = listOf("Gabung ke grup", "Join group", "Gabung grup", "GABUNG KE GRUP", "JOIN GROUP")
         val joinNodes = mutableListOf<AccessibilityNodeInfo>()
         for (kw in joinKeywords) {
@@ -370,67 +432,144 @@ class WhatsAppAccessibilityService : AccessibilityService() {
                     Handler(Looper.getMainLooper()).postDelayed({
                         performGlobalAction(GLOBAL_ACTION_BACK)
                     }, 1500)
-                    return
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    fun tryClickSendButton(rootNode: AccessibilityNodeInfo): Boolean {
+        val candidateNodes = mutableListOf<AccessibilityNodeInfo>()
+
+        // 1. By View IDs
+        val viewIds = listOf(
+            "com.whatsapp:id/send",
+            "com.whatsapp.w4b:id/send",
+            "com.whatsapp:id/send_button",
+            "com.whatsapp.w4b:id/send_button",
+            "com.whatsapp:id/btn_send",
+            "com.whatsapp.w4b:id/btn_send",
+            "com.whatsapp:id/entry_action"
+        )
+        for (id in viewIds) {
+            candidateNodes.addAll(rootNode.findAccessibilityNodeInfosByViewId(id))
+        }
+
+        // 2. Recursive search in view tree for Send button by ContentDescription & ViewId suffix
+        findSendNodesRecursive(rootNode, candidateNodes)
+
+        // 3. Fallback: by Text (filtered to bottom of screen to avoid matching chat bubbles)
+        if (candidateNodes.isEmpty()) {
+            val textNodes = mutableListOf<AccessibilityNodeInfo>()
+            textNodes.addAll(rootNode.findAccessibilityNodeInfosByText("Send"))
+            textNodes.addAll(rootNode.findAccessibilityNodeInfosByText("Kirim"))
+            val displayMetrics = resources.displayMetrics
+            for (tn in textNodes) {
+                val rect = Rect()
+                tn.getBoundsInScreen(rect)
+                if (rect.bottom > displayMetrics.heightPixels * 0.65) {
+                    candidateNodes.add(tn)
                 }
             }
         }
 
-        // 2. SEARCH AND CLICK SEND BUTTON
-        val sendNodes = mutableListOf<AccessibilityNodeInfo>()
+        // 4. Try clicking or tapping candidates
+        for (node in candidateNodes) {
+            val clicked = clickNodeOrGesture(node)
+            if (clicked) {
+                Log.d("WAGTW_ACCESSIBILITY", "Successfully clicked / dispatched Send button!")
+                cancelWatchdog()
+                isWaitingForSend = false
 
-        // View IDs
-        sendNodes.addAll(rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp:id/send"))
-        sendNodes.addAll(rootNode.findAccessibilityNodeInfosByViewId("com.whatsapp.w4b:id/send"))
+                val msgId = lastSentMessageId
+                lastSentMessageId = null
 
-        // Text & Content Descriptions
-        if (sendNodes.isEmpty()) {
-            sendNodes.addAll(rootNode.findAccessibilityNodeInfosByText("Send"))
-            sendNodes.addAll(rootNode.findAccessibilityNodeInfosByText("Kirim"))
-        }
+                // Give a brief moment to check if chat bubble showed failure icon
+                Handler(Looper.getMainLooper()).postDelayed({
+                    val currentWindow = rootInActiveWindow
+                    val hasSendError = currentWindow?.findAccessibilityNodeInfosByText("Pesan tidak terkirim")?.isNotEmpty() == true ||
+                                      currentWindow?.findAccessibilityNodeInfosByText("Not delivered")?.isNotEmpty() == true ||
+                                      currentWindow?.findAccessibilityNodeInfosByText("Ketuk untuk mencoba lagi")?.isNotEmpty() == true
 
-        for (node in sendNodes) {
-            if (node.isClickable || node.parent?.isClickable == true) {
-                val clicked = if (node.isClickable) {
-                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                } else {
-                    node.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
-                }
-
-                if (clicked) {
-                    Log.d("WAGTW_ACCESSIBILITY", "Successfully clicked Send button automatically!")
-                    cancelWatchdog()
-                    isWaitingForSend = false
-
-                    val msgId = lastSentMessageId
-                    lastSentMessageId = null
-
-                    // Give a brief moment to check if chat bubble showed failure icon
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        val currentWindow = rootInActiveWindow
-                        val hasSendError = currentWindow?.findAccessibilityNodeInfosByText("Pesan tidak terkirim")?.isNotEmpty() == true ||
-                                          currentWindow?.findAccessibilityNodeInfosByText("Not delivered")?.isNotEmpty() == true ||
-                                          currentWindow?.findAccessibilityNodeInfosByText("Ketuk untuk mencoba lagi")?.isNotEmpty() == true
-
-                        if (hasSendError) {
-                            AgentForegroundService.appendLog("⚠️ Gagal: Pesan tertahan / tidak terkirim di WhatsApp")
-                            if (msgId != null) {
-                                AgentForegroundService.notifyMessageFailed(msgId, "Pesan tidak terkirim di WhatsApp (jaringan atau dibatasi)")
-                            }
-                        } else {
-                            AgentForegroundService.appendLog("🚀 Pesan terkirim otomatis di WhatsApp!")
-                            if (msgId != null) {
-                                AgentForegroundService.notifyMessageSent(msgId)
-                            }
+                    if (hasSendError) {
+                        AgentForegroundService.appendLog("⚠️ Gagal: Pesan tertahan / tidak terkirim di WhatsApp")
+                        if (msgId != null) {
+                            AgentForegroundService.notifyMessageFailed(msgId, "Pesan tidak terkirim di WhatsApp (jaringan atau dibatasi)")
                         }
+                    } else {
+                        AgentForegroundService.appendLog("🚀 Pesan terkirim otomatis di WhatsApp!")
+                        if (msgId != null) {
+                            AgentForegroundService.notifyMessageSent(msgId)
+                        }
+                    }
 
-                        // Return to previous screen
-                        performGlobalAction(GLOBAL_ACTION_BACK)
-                    }, 1000)
+                    // Return to previous screen
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                }, 1200)
 
-                    break
-                }
+                return true
             }
         }
+        return false
+    }
+
+    private fun findSendNodesRecursive(node: AccessibilityNodeInfo?, results: MutableList<AccessibilityNodeInfo>) {
+        if (node == null) return
+
+        val desc = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+
+        val isSendDesc = (desc == "kirim" || desc == "send" || desc == "kirim pesan" || desc == "send message" || desc == "kirimkan") &&
+                         !desc.contains("suara") && !desc.contains("voice") && !desc.contains("audio")
+
+        val isSendId = viewId.endsWith(":id/send") || viewId.endsWith(":id/send_button") || viewId.endsWith(":id/btn_send")
+
+        if (isSendDesc || isSendId) {
+            results.add(node)
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            findSendNodesRecursive(child, results)
+        }
+    }
+
+    private fun clickNodeOrGesture(node: AccessibilityNodeInfo): Boolean {
+        // A. Walk up hierarchy (node -> parent -> grandparent) to find clickable element
+        var curr: AccessibilityNodeInfo? = node
+        var depth = 0
+        while (curr != null && depth < 4) {
+            if (curr.isClickable) {
+                val clicked = curr.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                if (clicked) {
+                    Log.d("WAGTW_ACCESSIBILITY", "Clicked send node at depth $depth via ACTION_CLICK")
+                    return true
+                }
+            }
+            curr = curr.parent
+            depth++
+        }
+
+        // B. Fallback: Dispatch simulated gesture tap on screen coordinates
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        if (rect.width() > 0 && rect.height() > 0) {
+            val x = rect.centerX().toFloat()
+            val y = rect.centerY().toFloat()
+            val path = Path().apply { moveTo(x, y) }
+            val gesture = GestureDescription.Builder()
+                .addStroke(GestureDescription.StrokeDescription(path, 0, 60))
+                .build()
+            val dispatched = dispatchGesture(gesture, null, null)
+            if (dispatched) {
+                Log.d("WAGTW_ACCESSIBILITY", "Dispatched gesture tap at ($x, $y)")
+                return true
+            }
+        }
+
+        return false
+    }
     }
 
     private var lastDualAppClickTime: Long = 0L

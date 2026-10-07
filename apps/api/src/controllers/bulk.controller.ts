@@ -68,30 +68,37 @@ async function processBulkJob(jobId: string) {
     data: { status: 'PROCESSING' }
   });
 
+  const isAutoRotate = job.name.includes('[Auto-Rotate]');
+  let bulkRotIndex = 0;
+
   for (const msg of job.messages) {
+    let targetDeviceId = job.deviceId;
+
+    if (isAutoRotate) {
+      const activeDevs = await prisma.device.findMany({
+        where: { status: 'CONNECTED', isPaused: false },
+        orderBy: { createdAt: 'asc' }
+      });
+      if (activeDevs.length > 0) {
+        targetDeviceId = activeDevs[bulkRotIndex % activeDevs.length].id;
+        bulkRotIndex++;
+      }
+    }
+
     // Circuit Breaker check before each message
-    const currentDevice = await prisma.device.findUnique({ where: { id: job.deviceId } });
+    let currentDevice = await prisma.device.findUnique({ where: { id: targetDeviceId } });
     if (!currentDevice || currentDevice.status !== 'CONNECTED' || currentDevice.isPaused) {
-      // Find fallback connected device, prioritizing physical Android Agent devices first
+      // Find fallback connected device
       const connectedCandidates = await prisma.device.findMany({
-        where: { status: 'CONNECTED', isPaused: false, id: { not: job.deviceId } }
+        where: { status: 'CONNECTED', isPaused: false, id: { not: targetDeviceId } }
       });
 
-      const fallbackAgent = connectedCandidates.find(d => {
-        try {
-          const s = JSON.parse(d.sessionData || '{}');
-          return s.type === 'ANDROID_AGENT';
-        } catch (e) {
-          return d.sessionData?.includes('ANDROID_AGENT');
-        }
-      });
-
-      const fallback = fallbackAgent || connectedCandidates[0];
+      const fallback = connectedCandidates[0];
 
       if (fallback) {
-        console.log(`[Bulk Job ${jobId}] Failover: Switching from ${job.deviceId} to ${fallback.name} (${fallback.id})`);
-        job.deviceId = fallback.id;
-        await prisma.bulkJob.update({ where: { id: jobId }, data: { deviceId: fallback.id } });
+        console.log(`[Bulk Job ${jobId}] Failover: Switching from ${targetDeviceId} to ${fallback.name} (${fallback.id})`);
+        targetDeviceId = fallback.id;
+        currentDevice = fallback;
       } else {
         console.error(`[Bulk Circuit Breaker] All devices are OFFLINE or PAUSED. Auto-stopping bulk job ${jobId}.`);
         await prisma.bulkJob.update({
@@ -105,7 +112,7 @@ async function processBulkJob(jobId: string) {
     try {
       if (currentDevice?.sessionData?.includes('ANDROID_AGENT')) {
         // Queue to Android Agent phone relay - Do NOT mark SENT yet!
-        enqueueAgentMessage(job.deviceId, msg.id, msg.to, msg.body);
+        enqueueAgentMessage(targetDeviceId, msg.id, msg.to, msg.body);
         // Leave status as PENDING until phone reports back via updateMessageStatus
         await prisma.bulkMessage.update({
           where: { id: msg.id },
@@ -114,7 +121,7 @@ async function processBulkJob(jobId: string) {
       } else {
         // Send via worker (Puppeteer Web Session)
         await axios.post(`${WORKER_URL}/messages/send`, {
-          deviceId: job.deviceId,
+          deviceId: targetDeviceId,
           to: msg.to,
           text: msg.body
         });

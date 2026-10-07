@@ -109,7 +109,7 @@ app.post('/messages/send', async (req, res) => {
     };
 
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('WhatsApp client timed out sending message after 20s')), 20000)
+      setTimeout(() => reject(new Error('WhatsApp client timed out sending message after 30s')), 30000)
     );
 
     const result = await Promise.race([sendWithTimeout(), timeoutPromise]);
@@ -117,8 +117,12 @@ app.post('/messages/send', async (req, res) => {
     console.log(`[Worker /messages/send] Message sent successfully to ${jid} via ${deviceId} in ${Date.now() - startTime}ms`);
     res.json({ success: true, result, jid });
   } catch (error: any) {
-    console.error(`Failed to send message via worker to ${jid}:`, error?.message || error);
-    res.status(500).json({ error: error?.message || 'Failed to send message via worker' });
+    const errText = error?.message || String(error);
+    console.error(`Failed to send message via worker to ${jid}:`, errText);
+    if (errText.includes('timed out') || errText.includes('Target closed') || errText.includes('protocolTimeout')) {
+      waManager.evictAuthenticatedSession(deviceId);
+    }
+    res.status(500).json({ error: errText || 'Failed to send message via worker' });
   }
 });
 
